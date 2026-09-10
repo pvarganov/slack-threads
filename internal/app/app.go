@@ -193,6 +193,16 @@ func (a *App) pumpProgress(ctx context.Context) {
 	}
 }
 
+// syncer returns the current sync service under the lock wire() writes it
+// through, so callers never observe a torn read while a token change is
+// replacing it.
+func (a *App) syncer() Syncer {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.sync
+}
+
 // Version reports the application version to the frontend.
 func (a *App) Version() string {
 	return Version

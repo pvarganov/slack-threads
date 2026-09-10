@@ -46,7 +46,8 @@ type Storage interface {
 // AddThread starts tracking the thread a Slack permalink points at and
 // returns it fully rendered, ready to be shown.
 func (a *App) AddThread(rawURL string) (ThreadView, error) {
-	if a.sync == nil {
+	sync := a.syncer()
+	if sync == nil {
 		return ThreadView{}, errNotReady()
 	}
 
@@ -70,7 +71,7 @@ func (a *App) AddThread(rawURL string) (ThreadView, error) {
 	}
 	defer a.locks.release(key)
 
-	res, err := a.sync.AddThread(ctx, rawURL)
+	res, err := sync.AddThread(ctx, rawURL)
 	if err != nil {
 		return ThreadView{}, userError(err)
 	}
@@ -110,7 +111,8 @@ func (a *App) GetThread(id int64) (ThreadView, error) {
 
 // RefreshThread re-reads one thread from Slack and translates the delta.
 func (a *App) RefreshThread(id int64) (ThreadView, error) {
-	if a.sync == nil {
+	sync := a.syncer()
+	if sync == nil {
 		return ThreadView{}, errNotReady()
 	}
 
@@ -122,7 +124,7 @@ func (a *App) RefreshThread(id int64) (ThreadView, error) {
 
 	ctx := a.context()
 
-	if _, err := a.sync.RefreshThread(ctx, id); err != nil {
+	if _, err := sync.RefreshThread(ctx, id); err != nil {
 		return ThreadView{}, userError(err)
 	}
 
@@ -133,7 +135,8 @@ func (a *App) RefreshThread(id int64) (ThreadView, error) {
 // separately: a thread that failed carries its message and the rest still
 // get refreshed.
 func (a *App) RefreshAll() ([]RefreshOutcome, error) {
-	if a.sync == nil {
+	sync := a.syncer()
+	if sync == nil {
 		return nil, errNotReady()
 	}
 
@@ -142,7 +145,7 @@ func (a *App) RefreshAll() ([]RefreshOutcome, error) {
 	}
 	defer a.locks.release(keyAll)
 
-	results, err := a.sync.RefreshAll(a.context())
+	results, err := sync.RefreshAll(a.context())
 	if err != nil {
 		return nil, userError(err)
 	}
@@ -183,11 +186,11 @@ func (a *App) DeleteThread(id int64) error {
 		return userError(err)
 	}
 
-	if a.sync != nil {
+	if sync := a.syncer(); sync != nil {
 		// Best-effort cleanup: the thread is already gone from the store,
 		// so a claude process that failed to shut down would only be
 		// reaped later by the idle timeout, not surfaced as a failure.
-		_ = a.sync.CloseThread(id)
+		_ = sync.CloseThread(id)
 	}
 
 	return nil
@@ -206,7 +209,8 @@ func (a *App) ArchiveThread(id int64, archived bool) error {
 // DraftReply translates a Russian reply into English and stores it as the
 // thread's draft, together with the back translation to check it by.
 func (a *App) DraftReply(id int64, ru string) (DraftView, error) {
-	if a.sync == nil {
+	sync := a.syncer()
+	if sync == nil {
 		return DraftView{}, errNotReady()
 	}
 
@@ -216,7 +220,7 @@ func (a *App) DraftReply(id int64, ru string) (DraftView, error) {
 	}
 	defer a.locks.release(key)
 
-	draft, err := a.sync.DraftReply(a.context(), id, ru)
+	draft, err := sync.DraftReply(a.context(), id, ru)
 	if err != nil {
 		return DraftView{}, userError(err)
 	}
@@ -227,7 +231,8 @@ func (a *App) DraftReply(id int64, ru string) (DraftView, error) {
 // SendReply posts the English text into the thread. The text comes from
 // the UI rather than from the draft, so the user can edit it first.
 func (a *App) SendReply(id int64, en string) (SentView, error) {
-	if a.sync == nil {
+	sync := a.syncer()
+	if sync == nil {
 		return SentView{}, errNotReady()
 	}
 
@@ -237,7 +242,7 @@ func (a *App) SendReply(id int64, en string) (SentView, error) {
 	}
 	defer a.locks.release(key)
 
-	sent, err := a.sync.SendReply(a.context(), id, en)
+	sent, err := sync.SendReply(a.context(), id, en)
 	if err != nil {
 		return SentView{}, userError(err)
 	}
@@ -285,8 +290,8 @@ func (a *App) threadView(ctx context.Context, id int64) (ThreadView, error) {
 		return ThreadView{}, userError(err)
 	}
 
-	if a.sync != nil {
-		draft, err := a.sync.GetDraft(ctx, id)
+	if sync := a.syncer(); sync != nil {
+		draft, err := sync.GetDraft(ctx, id)
 		if err != nil {
 			return ThreadView{}, userError(err)
 		}
