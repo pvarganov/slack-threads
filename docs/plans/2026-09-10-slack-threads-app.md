@@ -161,17 +161,17 @@ Slack медленно, а разовый перевод в чате не сох
 
 ### Task 5: Slack-клиент — чтение треда
 
-- [ ] написать тесты на `conversations.replies` против `httptest.Server`: одна страница,
+- [x] написать тесты на `conversations.replies` против `httptest.Server`: одна страница,
       пагинация по `response_metadata.next_cursor`, пустой тред, `ok:false` с
       `error: channel_not_found`
-- [ ] написать тесты на обработку `429`: уважение `Retry-After`, ограниченное число
+- [x] написать тесты на обработку `429`: уважение `Retry-After`, ограниченное число
       повторов, возврат типизированной ошибки при исчерпании
-- [ ] реализовать `internal/slackapi` с интерфейсом `Client`, транспортом на
+- [x] реализовать `internal/slackapi` с интерфейсом `Client`, транспортом на
       `net/http`, user-токеном в заголовке `Authorization: Bearer`
-- [ ] реализовать `FetchThread(ctx, channelID, threadTS)` с полной пагинацией
-- [ ] написать тесты на маппинг сырого ответа в доменную структуру сообщения
+- [x] реализовать `FetchThread(ctx, channelID, threadTS)` с полной пагинацией
+- [x] написать тесты на маппинг сырого ответа в доменную структуру сообщения
       (ts, user, bot_id, text, edited.ts, reactions, subtype)
-- [ ] run tests - must pass before next task
+- [x] run tests - must pass before next task
 
 ### Task 6: Slack-клиент — пользователи и рендер mrkdwn
 
