@@ -36,6 +36,8 @@ const (
 type Client interface {
 	// FetchThread returns every message of a thread, parent first.
 	FetchThread(ctx context.Context, channelID, threadTS string) ([]Message, error)
+	// ResolveUsers maps author IDs onto profiles, using the cache first.
+	ResolveUsers(ctx context.Context, ids []string) (map[string]User, error)
 }
 
 // Doer is the subset of *http.Client the transport needs.
@@ -51,6 +53,7 @@ type HTTPClient struct {
 	httpc      Doer
 	maxRetries int
 	pageLimit  int
+	users      UserCache
 	sleep      func(ctx context.Context, d time.Duration) error
 }
 
@@ -92,6 +95,7 @@ func New(token string, opts ...Option) *HTTPClient {
 		httpc:      &http.Client{Timeout: 30 * time.Second},
 		maxRetries: defaultMaxRetries,
 		pageLimit:  defaultPageLimit,
+		users:      nopCache{},
 		sleep:      sleepCtx,
 	}
 
