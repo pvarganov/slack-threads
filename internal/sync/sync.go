@@ -303,36 +303,36 @@ func (s *Service) syncThread(ctx context.Context, thread store.Thread) (Result, 
 
 	fetched, err := s.slack.FetchThread(ctx, thread.ChannelID, thread.ThreadTS)
 	if err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	if len(fetched) == 0 {
-		return Result{}, fmt.Errorf("%w: %s/%s", ErrEmptyThread, thread.ChannelID, thread.ThreadTS)
+		return res, fmt.Errorf("%w: %s/%s", ErrEmptyThread, thread.ChannelID, thread.ThreadTS)
 	}
 
 	res.Fetched = len(fetched)
 
 	names, err := s.resolveNames(ctx, fetched)
 	if err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	stats, err := s.store.UpsertMessages(ctx, thread.ID, storeMessages(thread.ID, fetched))
 	if err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	res.Inserted, res.Updated, res.Unchanged = stats.Inserted, stats.Updated, stats.Unchanged
 
 	res.Deleted, err = s.store.MarkMessagesDeleted(ctx, thread.ID, timestamps(fetched))
 	if err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	fetchedAt := s.now()
 
 	if err := s.store.SetThreadFetched(ctx, thread.ID, fetchedAt); err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	thread.LastFetchedAt = fetchedAt
@@ -341,7 +341,7 @@ func (s *Service) syncThread(ctx context.Context, thread store.Thread) (Result, 
 	// pending "we posted a reply" flag is settled.
 	if thread.NeedsRefresh {
 		if err := s.store.SetThreadNeedsRefresh(ctx, thread.ID, false); err != nil {
-			return Result{}, err
+			return res, err
 		}
 
 		thread.NeedsRefresh = false
@@ -351,20 +351,21 @@ func (s *Service) syncThread(ctx context.Context, thread store.Thread) (Result, 
 		thread.Title = threadTitle(fetched[0], names)
 
 		if err := s.store.SetThreadTitle(ctx, thread.ID, thread.Title); err != nil {
-			return Result{}, err
+			res.Thread = thread
+			return res, err
 		}
 	}
 
+	res.Thread = thread
+
 	msgs, err := s.translateThread(ctx, thread, names, &res)
 	if err != nil {
-		return Result{}, err
+		return res, err
 	}
 
 	if err := s.updateSummary(ctx, thread, msgs, &res); err != nil {
-		return Result{}, err
+		return res, err
 	}
-
-	res.Thread = thread
 
 	s.emit(Progress{ThreadID: thread.ID, Stage: StageDone})
 
