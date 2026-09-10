@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewReturnsUsableApp(t *testing.T) {
-	a := New()
+	a := New(WithTokenStore(&fakeStore{}))
 	if a == nil {
 		t.Fatal("New() returned nil")
 	}
@@ -16,8 +16,20 @@ func TestNewReturnsUsableApp(t *testing.T) {
 	}
 }
 
-func TestStartupStoresContext(t *testing.T) {
+func TestNewUsesProductionDefaults(t *testing.T) {
 	a := New()
+
+	if a.tokens == nil {
+		t.Error("New() left the token store unset")
+	}
+
+	if a.checker == nil {
+		t.Error("New() left the token checker unset")
+	}
+}
+
+func TestStartupStoresContext(t *testing.T) {
+	a := New(WithTokenStore(&fakeStore{}), WithTokenChecker(okChecker(nil)))
 
 	type key struct{}
 
@@ -34,8 +46,23 @@ func TestStartupStoresContext(t *testing.T) {
 	}
 }
 
+func TestStartupChecksTheToken(t *testing.T) {
+	a := New(WithTokenStore(&fakeStore{token: "xoxp-good"}), WithTokenChecker(okChecker(nil)))
+
+	a.startup(context.Background())
+
+	status := a.TokenStatus()
+	if !status.OK {
+		t.Fatalf("TokenStatus after startup = %+v, want OK", status)
+	}
+
+	if status.User != "pavel" || status.Team != "Acme" {
+		t.Errorf("TokenStatus = %+v", status)
+	}
+}
+
 func TestVersionDefaultsToDev(t *testing.T) {
-	if got := New().Version(); got != Version {
+	if got := New(WithTokenStore(&fakeStore{})).Version(); got != Version {
 		t.Fatalf("Version() = %q, want %q", got, Version)
 	}
 
