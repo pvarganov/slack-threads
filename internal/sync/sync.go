@@ -109,6 +109,10 @@ type Store interface {
 	SaveSummary(ctx context.Context, sum store.Summary) error
 	SetThreadFetched(ctx context.Context, id int64, at time.Time) error
 	SetThreadTitle(ctx context.Context, id int64, title string) error
+	SetThreadNeedsRefresh(ctx context.Context, id int64, needs bool) error
+	GetDraft(ctx context.Context, threadID int64) (store.Draft, error)
+	SaveDraft(ctx context.Context, d store.Draft) error
+	DeleteDraft(ctx context.Context, threadID int64) error
 }
 
 // Translator is the translation surface the orchestration needs.
@@ -116,6 +120,7 @@ type Store interface {
 type Translator interface {
 	TranslateMessages(ctx context.Context, threadID string, msgs []translate.Message) ([]translate.Translation, error)
 	Summarize(ctx context.Context, threadID string, translated []translate.Message) (string, error)
+	DraftReply(ctx context.Context, threadID, ru string) (en, backRU string, err error)
 }
 
 // Service adds and refreshes threads on top of the store, the Slack client
@@ -311,6 +316,16 @@ func (s *Service) syncThread(ctx context.Context, thread store.Thread) (Result, 
 	}
 
 	thread.LastFetchedAt = fetchedAt
+
+	// Whatever the sync just read is the current state of the thread, so a
+	// pending "we posted a reply" flag is settled.
+	if thread.NeedsRefresh {
+		if err := s.store.SetThreadNeedsRefresh(ctx, thread.ID, false); err != nil {
+			return Result{}, err
+		}
+
+		thread.NeedsRefresh = false
+	}
 
 	if thread.Title == "" {
 		thread.Title = threadTitle(fetched[0], names)

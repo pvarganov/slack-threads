@@ -31,10 +31,14 @@ type Thread struct {
 	// ClaudeSessionID is the translator session bound to this thread, used to
 	// resume it after an app restart.
 	ClaudeSessionID string
+	// NeedsRefresh marks a thread the app knows to be out of date locally,
+	// e.g. right after a reply was posted to it. The next successful sync
+	// clears the flag.
+	NeedsRefresh bool
 }
 
 // threadColumns is the column list shared by every thread SELECT.
-const threadColumns = `id, channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id`
+const threadColumns = `id, channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh`
 
 // AddThread stores a new thread and returns it with ID and AddedAt filled in.
 // It returns ErrThreadExists if the (ChannelID, ThreadTS) pair is already
@@ -49,10 +53,11 @@ func (s *Store) AddThread(ctx context.Context, t Thread) (Thread, error) {
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO threads (channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO threads (channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ChannelID, t.ThreadTS, t.Workspace, t.Title,
-		toUnix(t.AddedAt), nullableUnix(t.LastFetchedAt), boolToInt(t.Archived), t.ClaudeSessionID)
+		toUnix(t.AddedAt), nullableUnix(t.LastFetchedAt), boolToInt(t.Archived), t.ClaudeSessionID,
+		boolToInt(t.NeedsRefresh))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return Thread{}, fmt.Errorf("%w: %s/%s", ErrThreadExists, t.ChannelID, t.ThreadTS)
@@ -158,6 +163,11 @@ func (s *Store) SetThreadFetched(ctx context.Context, id int64, at time.Time) er
 	return s.updateThread(ctx, id, `UPDATE threads SET last_fetched_at = ? WHERE id = ?`, toUnix(at), id)
 }
 
+// SetThreadNeedsRefresh flags (or unflags) a thread as locally out of date.
+func (s *Store) SetThreadNeedsRefresh(ctx context.Context, id int64, needs bool) error {
+	return s.updateThread(ctx, id, `UPDATE threads SET needs_refresh = ? WHERE id = ?`, boolToInt(needs), id)
+}
+
 // SetThreadSession stores the claude session ID bound to the thread.
 func (s *Store) SetThreadSession(ctx context.Context, id int64, sessionID string) error {
 	return s.updateThread(ctx, id, `UPDATE threads SET claude_session_id = ? WHERE id = ?`, sessionID, id)
@@ -197,20 +207,22 @@ type rowScanner interface {
 // scanThread reads one threads row.
 func scanThread(sc rowScanner) (Thread, error) {
 	var (
-		t           Thread
-		addedAt     int64
-		lastFetched sql.NullInt64
-		archived    int
+		t            Thread
+		addedAt      int64
+		lastFetched  sql.NullInt64
+		archived     int
+		needsRefresh int
 	)
 
 	err := sc.Scan(&t.ID, &t.ChannelID, &t.ThreadTS, &t.Workspace, &t.Title,
-		&addedAt, &lastFetched, &archived, &t.ClaudeSessionID)
+		&addedAt, &lastFetched, &archived, &t.ClaudeSessionID, &needsRefresh)
 	if err != nil {
 		return Thread{}, err
 	}
 
 	t.AddedAt = fromUnix(addedAt)
 	t.Archived = archived != 0
+	t.NeedsRefresh = needsRefresh != 0
 
 	if lastFetched.Valid {
 		t.LastFetchedAt = fromUnix(lastFetched.Int64)

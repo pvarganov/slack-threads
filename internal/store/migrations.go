@@ -82,6 +82,15 @@ var migrations = []migration{
 			`ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		name: "thread refresh flag",
+		stmts: []string{
+			// Set when the app itself changed the thread in Slack (a reply
+			// was sent) and the local copy is known to be behind. The next
+			// successful sync clears it.
+			`ALTER TABLE threads ADD COLUMN needs_refresh INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 // SchemaVersion is the schema version a freshly migrated database carries.

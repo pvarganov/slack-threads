@@ -29,6 +29,34 @@ type fakeSlack struct {
 	users   map[string]slackapi.User
 	errs    map[string]error
 	fetches int
+	// posted records every reply sent through PostMessage.
+	posted []postedReply
+	// postErr, when set, fails every PostMessage call.
+	postErr error
+}
+
+// postedReply is one recorded chat.postMessage call.
+type postedReply struct {
+	channelID string
+	threadTS  string
+	text      string
+}
+
+func (f *fakeSlack) PostMessage(
+	_ context.Context, channelID, threadTS, text string,
+) (slackapi.Posted, error) {
+	if f.postErr != nil {
+		return slackapi.Posted{}, f.postErr
+	}
+
+	f.posted = append(f.posted, postedReply{channelID: channelID, threadTS: threadTS, text: text})
+
+	return slackapi.Posted{
+		Channel:   channelID,
+		TS:        "1700000000.000900",
+		ThreadTS:  threadTS,
+		Permalink: "https://acme.slack.com/archives/" + channelID + "/p1700000000000900",
+	}, nil
 }
 
 func (f *fakeSlack) FetchThread(_ context.Context, channelID, threadTS string) ([]slackapi.Message, error) {
@@ -63,6 +91,21 @@ type fakeTranslator struct {
 	keys      []string
 	err       error
 	summErr   error
+	// drafts records the Russian replies handed to DraftReply.
+	drafts []string
+	// draftErr, when set, fails every DraftReply call.
+	draftErr error
+}
+
+func (f *fakeTranslator) DraftReply(_ context.Context, threadID, ru string) (string, string, error) {
+	if f.draftErr != nil {
+		return "", "", f.draftErr
+	}
+
+	f.drafts = append(f.drafts, ru)
+	f.keys = append(f.keys, threadID)
+
+	return "en:" + ru, "back:" + ru, nil
 }
 
 func (f *fakeTranslator) TranslateMessages(

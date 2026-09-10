@@ -38,6 +38,9 @@ type Client interface {
 	FetchThread(ctx context.Context, channelID, threadTS string) ([]Message, error)
 	// ResolveUsers maps author IDs onto profiles, using the cache first.
 	ResolveUsers(ctx context.Context, ids []string) (map[string]User, error)
+	// PostMessage posts a reply into a thread and returns its coordinates
+	// and permalink.
+	PostMessage(ctx context.Context, channelID, threadTS, text string) (Posted, error)
 }
 
 // Doer is the subset of *http.Client the transport needs.
@@ -137,10 +140,36 @@ func (c *HTTPClient) get(ctx context.Context, method string, params url.Values, 
 		endpoint += "?" + params.Encode()
 	}
 
+	return c.call(ctx, method, out, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	})
+}
+
+// post performs a form-encoded POST against a Slack method, with the same
+// retry and envelope handling as get.
+func (c *HTTPClient) post(ctx context.Context, method string, form url.Values, out any) error {
+	endpoint := c.baseURL + "/" + method
+
+	return c.call(ctx, method, out, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+
+		return req, nil
+	})
+}
+
+// call sends the request newReq builds, repeating it while Slack answers
+// 429, and decodes the reply into out. newReq is called once per attempt:
+// a retried POST needs its own body reader.
+func (c *HTTPClient) call(ctx context.Context, method string, out any, newReq func() (*http.Request, error)) error {
 	var lastRetryAfter time.Duration
 
 	for attempt := 1; attempt <= c.maxRetries+1; attempt++ {
-		body, retryAfter, err := c.doOnce(ctx, method, endpoint)
+		body, retryAfter, err := c.doOnce(method, newReq)
 
 		switch {
 		case err != nil:
@@ -180,8 +209,8 @@ func (c *HTTPClient) get(ctx context.Context, method string, params url.Values, 
 
 // doOnce sends a single request. A non-zero retryAfter means Slack answered
 // 429 and the call should be repeated after that delay.
-func (c *HTTPClient) doOnce(ctx context.Context, method, endpoint string) ([]byte, time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+func (c *HTTPClient) doOnce(method string, newReq func() (*http.Request, error)) ([]byte, time.Duration, error) {
+	req, err := newReq()
 	if err != nil {
 		return nil, 0, fmt.Errorf("slackapi: build request: %w", err)
 	}
