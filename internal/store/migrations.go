@@ -73,6 +73,15 @@ var migrations = []migration{
 			)`,
 		},
 	},
+	{
+		name: "message deletion flag",
+		stmts: []string{
+			// Messages that disappeared from Slack are kept locally with
+			// their translation and only flagged, so the thread history
+			// never loses a message that was read once.
+			`ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+		},
+	},
 }
 
 // SchemaVersion is the schema version a freshly migrated database carries.

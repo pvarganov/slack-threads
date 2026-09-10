@@ -398,3 +398,160 @@ func TestUpsertMessagesRespectsContext(t *testing.T) {
 		t.Fatalf("messages = %d, want 0", n)
 	}
 }
+
+func TestMarkMessagesDeletedFlagsMissing(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	threadID := newThread(t, s, "C1", "1.000000")
+
+	if _, err := s.UpsertMessages(ctx, threadID, []store.Message{
+		{TS: "1.000000", Text: "root"},
+		{TS: "2.000000", Text: "reply"},
+		{TS: "3.000000", Text: "gone"},
+	}); err != nil {
+		t.Fatalf("UpsertMessages: %v", err)
+	}
+
+	translateAll(t, s, threadID)
+
+	n, err := s.MarkMessagesDeleted(ctx, threadID, []string{"1.000000", "2.000000"})
+	if err != nil {
+		t.Fatalf("MarkMessagesDeleted: %v", err)
+	}
+
+	if n != 1 {
+		t.Fatalf("MarkMessagesDeleted flagged %d messages, want 1", n)
+	}
+
+	msgs, err := s.ListMessages(ctx, threadID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	if len(msgs) != 3 {
+		t.Fatalf("ListMessages returned %d messages, want the deleted one kept", len(msgs))
+	}
+
+	for _, m := range msgs {
+		if want := m.TS == "3.000000"; m.Deleted != want {
+			t.Errorf("message %s: Deleted = %v, want %v", m.TS, m.Deleted, want)
+		}
+	}
+
+	// The translation of a deleted message survives.
+	trs, err := s.ListTranslations(ctx, threadID)
+	if err != nil {
+		t.Fatalf("ListTranslations: %v", err)
+	}
+
+	if len(trs) != 3 {
+		t.Fatalf("ListTranslations returned %d rows, want 3", len(trs))
+	}
+
+	// Flagging twice reports nothing new.
+	again, err := s.MarkMessagesDeleted(ctx, threadID, []string{"1.000000", "2.000000"})
+	if err != nil {
+		t.Fatalf("MarkMessagesDeleted (repeat): %v", err)
+	}
+
+	if again != 0 {
+		t.Fatalf("MarkMessagesDeleted flagged %d messages on repeat, want 0", again)
+	}
+}
+
+func TestMarkMessagesDeletedIgnoresEmptyList(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	threadID := newThread(t, s, "C1", "1.000000")
+
+	if _, err := s.UpsertMessages(ctx, threadID, []store.Message{{TS: "1.000000", Text: "root"}}); err != nil {
+		t.Fatalf("UpsertMessages: %v", err)
+	}
+
+	n, err := s.MarkMessagesDeleted(ctx, threadID, nil)
+	if err != nil {
+		t.Fatalf("MarkMessagesDeleted: %v", err)
+	}
+
+	if n != 0 {
+		t.Fatalf("MarkMessagesDeleted flagged %d messages for an empty list, want 0", n)
+	}
+
+	msgs, err := s.ListMessages(ctx, threadID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	if msgs[0].Deleted {
+		t.Fatal("an empty present list buried the local history")
+	}
+}
+
+func TestUpsertMessagesResurrectsDeleted(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	threadID := newThread(t, s, "C1", "1.000000")
+
+	msgs := []store.Message{{TS: "1.000000", Text: "root"}, {TS: "2.000000", Text: "reply"}}
+	if _, err := s.UpsertMessages(ctx, threadID, msgs); err != nil {
+		t.Fatalf("UpsertMessages: %v", err)
+	}
+
+	if _, err := s.MarkMessagesDeleted(ctx, threadID, []string{"1.000000"}); err != nil {
+		t.Fatalf("MarkMessagesDeleted: %v", err)
+	}
+
+	stats, err := s.UpsertMessages(ctx, threadID, msgs)
+	if err != nil {
+		t.Fatalf("UpsertMessages (again): %v", err)
+	}
+
+	if stats.Updated != 1 || stats.Unchanged != 1 {
+		t.Fatalf("UpsertMessages stats = %+v, want 1 updated (resurrected) and 1 unchanged", stats)
+	}
+
+	stored, err := s.ListMessages(ctx, threadID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	for _, m := range stored {
+		if m.Deleted {
+			t.Errorf("message %s is still flagged deleted after Slack returned it again", m.TS)
+		}
+	}
+}
+
+func TestUntranslatedMessagesSkipsDeleted(t *testing.T) {
+	t.Parallel()
+
+	s, _ := openTemp(t)
+	ctx := context.Background()
+	threadID := newThread(t, s, "C1", "1.000000")
+
+	if _, err := s.UpsertMessages(ctx, threadID, []store.Message{
+		{TS: "1.000000", Text: "root"},
+		{TS: "2.000000", Text: "gone"},
+	}); err != nil {
+		t.Fatalf("UpsertMessages: %v", err)
+	}
+
+	if _, err := s.MarkMessagesDeleted(ctx, threadID, []string{"1.000000"}); err != nil {
+		t.Fatalf("MarkMessagesDeleted: %v", err)
+	}
+
+	pending, err := s.UntranslatedMessages(ctx, threadID)
+	if err != nil {
+		t.Fatalf("UntranslatedMessages: %v", err)
+	}
+
+	if len(pending) != 1 || pending[0].TS != "1.000000" {
+		t.Fatalf("UntranslatedMessages = %+v, want only the live message", pending)
+	}
+}

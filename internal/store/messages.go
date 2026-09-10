@@ -28,6 +28,10 @@ type Message struct {
 	// TextHash is the digest of Text; it decides whether a stored
 	// translation is still valid. UpsertMessages fills it in.
 	TextHash string
+	// Deleted marks a message that is no longer in the Slack thread. Such
+	// a message is kept with its translation and only hidden away in the
+	// UI; MarkMessagesDeleted sets the flag.
+	Deleted bool
 }
 
 // UpsertStats reports what a single UpsertMessages call changed.
@@ -51,11 +55,11 @@ func TextHash(text string) string {
 }
 
 // messageColumns is the column list shared by every message SELECT.
-const messageColumns = `id, thread_id, ts, user_id, text, raw_json, edited_ts, text_hash`
+const messageColumns = `id, thread_id, ts, user_id, text, raw_json, edited_ts, text_hash, deleted`
 
 // messageColumnsM is the same list qualified for queries that join another
 // table.
-const messageColumnsM = `m.id, m.thread_id, m.ts, m.user_id, m.text, m.raw_json, m.edited_ts, m.text_hash`
+const messageColumnsM = `m.id, m.thread_id, m.ts, m.user_id, m.text, m.raw_json, m.edited_ts, m.text_hash, m.deleted`
 
 // UpsertMessages stores the freshly fetched messages of a thread. New
 // messages are inserted, messages whose text is unchanged are left untouched
@@ -84,26 +88,32 @@ func (s *Store) UpsertMessages(ctx context.Context, threadID int64, msgs []Messa
 		m.TextHash = TextHash(m.Text)
 
 		var (
-			id       int64
-			oldHash  string
-			oldEdit  string
-			oldRaw   string
-			oldUser  string
-			existing = tx.QueryRowContext(ctx,
-				`SELECT id, text_hash, edited_ts, raw_json, user_id FROM messages WHERE thread_id = ? AND ts = ?`,
+			id         int64
+			oldHash    string
+			oldEdit    string
+			oldRaw     string
+			oldUser    string
+			oldDeleted int
+			existing   = tx.QueryRowContext(ctx,
+				`SELECT id, text_hash, edited_ts, raw_json, user_id, deleted
+				 FROM messages WHERE thread_id = ? AND ts = ?`,
 				threadID, m.TS)
 		)
 
-		switch err := existing.Scan(&id, &oldHash, &oldEdit, &oldRaw, &oldUser); {
+		switch err := existing.Scan(&id, &oldHash, &oldEdit, &oldRaw, &oldUser, &oldDeleted); {
 		case err == nil:
-			if oldHash == m.TextHash && oldEdit == m.EditedTS && oldRaw == m.RawJSON && oldUser == m.UserID {
+			if oldHash == m.TextHash && oldEdit == m.EditedTS && oldRaw == m.RawJSON &&
+				oldUser == m.UserID && oldDeleted == 0 {
 				stats.Unchanged++
 
 				continue
 			}
 
+			// A message Slack shows again is no longer deleted.
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE messages SET user_id = ?, text = ?, raw_json = ?, edited_ts = ?, text_hash = ? WHERE id = ?`,
+				`UPDATE messages
+				 SET user_id = ?, text = ?, raw_json = ?, edited_ts = ?, text_hash = ?, deleted = 0
+				 WHERE id = ?`,
 				m.UserID, m.Text, m.RawJSON, m.EditedTS, m.TextHash, id); err != nil {
 				return UpsertStats{}, fmt.Errorf("store: update message %s: %w", m.TS, err)
 			}
@@ -152,8 +162,41 @@ func (s *Store) UntranslatedMessages(ctx context.Context, threadID int64) ([]Mes
 		`SELECT `+messageColumnsM+`
 		 FROM messages m
 		 LEFT JOIN translations t ON t.message_id = m.id
-		 WHERE m.thread_id = ? AND t.message_id IS NULL
+		 WHERE m.thread_id = ? AND t.message_id IS NULL AND m.deleted = 0
 		 ORDER BY m.ts ASC, m.id ASC`, threadID)
+}
+
+// MarkMessagesDeleted flags every stored message of the thread whose
+// timestamp is not in presentTS: those are the messages Slack no longer
+// returns. Nothing is removed — text and translation stay readable — and the
+// number of newly flagged messages is returned. An empty presentTS is
+// ignored: a thread that came back empty is an error upstream, not a reason
+// to bury the whole local history.
+func (s *Store) MarkMessagesDeleted(ctx context.Context, threadID int64, presentTS []string) (int, error) {
+	if len(presentTS) == 0 {
+		return 0, nil
+	}
+
+	args := make([]any, 0, len(presentTS)+1)
+	args = append(args, threadID)
+
+	for _, ts := range presentTS {
+		args = append(args, ts)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET deleted = 1
+		 WHERE thread_id = ? AND deleted = 0 AND ts NOT IN (?`+repeatPlaceholders(len(presentTS)-1)+`)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("store: mark deleted messages of thread %d: %w", threadID, err)
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: mark deleted messages of thread %d: %w", threadID, err)
+	}
+
+	return int(n), nil
 }
 
 // GetMessage returns one message by local ID, or ErrNotFound.
@@ -200,12 +243,17 @@ func (s *Store) queryMessages(ctx context.Context, query string, args ...any) ([
 
 // scanMessage reads one messages row.
 func scanMessage(sc rowScanner) (Message, error) {
-	var m Message
+	var (
+		m       Message
+		deleted int
+	)
 
-	err := sc.Scan(&m.ID, &m.ThreadID, &m.TS, &m.UserID, &m.Text, &m.RawJSON, &m.EditedTS, &m.TextHash)
+	err := sc.Scan(&m.ID, &m.ThreadID, &m.TS, &m.UserID, &m.Text, &m.RawJSON, &m.EditedTS, &m.TextHash, &deleted)
 	if err != nil {
 		return Message{}, err
 	}
+
+	m.Deleted = deleted != 0
 
 	return m, nil
 }
