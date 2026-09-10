@@ -159,8 +159,11 @@ func (a *App) wire(ctx context.Context, token string) {
 
 	if previous != nil {
 		// Best-effort: the new service is already in place, so a claude
-		// process that failed to shut down is not worth failing over.
-		_ = previous.Close()
+		// process that failed to shut down is not worth failing over. Closing
+		// a busy session waits for its turn to finish, which can take up to
+		// the response timeout, so this must not block the caller (wire is
+		// called synchronously from SaveToken/CheckToken).
+		go func() { _ = previous.Close() }()
 	}
 }
 

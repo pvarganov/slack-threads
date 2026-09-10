@@ -26,7 +26,28 @@ func TestThreadItemFormatsTimes(t *testing.T) {
 
 func TestThreadPermalinkNeedsAllParts(t *testing.T) {
 	if got := threadPermalink(store.Thread{ChannelID: "C1", ThreadTS: "1.2"}); got != "" {
-		t.Errorf("permalink without a workspace = %q, want empty", got)
+		t.Errorf("permalink without a workspace or team = %q, want empty", got)
+	}
+}
+
+// TestThreadPermalinkFallsBackToTeamID covers threads added from an
+// app.slack.com/client/... link, which carries a team ID instead of a
+// workspace subdomain (see permalink.Link).
+func TestThreadPermalinkFallsBackToTeamID(t *testing.T) {
+	got := threadPermalink(store.Thread{ChannelID: "C1", ThreadTS: "1.2", TeamID: "T1"})
+	want := "https://app.slack.com/client/T1/C1/thread/C1-1.2"
+
+	if got != want {
+		t.Errorf("permalink = %q, want %q", got, want)
+	}
+}
+
+func TestThreadPermalinkPrefersWorkspaceOverTeamID(t *testing.T) {
+	got := threadPermalink(store.Thread{ChannelID: "C1", ThreadTS: "1.2", Workspace: "acme", TeamID: "T1"})
+	want := "https://acme.slack.com/archives/C1/p12"
+
+	if got != want {
+		t.Errorf("permalink = %q, want %q", got, want)
 	}
 }
 

@@ -359,6 +359,62 @@ func TestSessionCloseIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestSessionCloseWaitsForInFlightSend guards against the race Close and
+// Send used to have over the shared stdin/events plumbing: Close must not
+// start tearing the session down while a turn is still being served.
+func TestSessionCloseWaitsForInFlightSend(t *testing.T) {
+	started := make(chan struct{})
+	proceed := make(chan struct{})
+
+	s, _ := startSession(t, Config{}, func(p *fakeProcess) {
+		if _, ok := p.next(); !ok {
+			return
+		}
+
+		close(started)
+		<-proceed
+
+		p.emit(resultEvent("sess-1", "ok"))
+		_, _ = p.next()
+	})
+
+	sendDone := make(chan error, 1)
+
+	go func() {
+		_, err := s.Send(context.Background(), "prompt")
+		sendDone <- err
+	}()
+
+	<-started
+
+	closeDone := make(chan error, 1)
+
+	go func() {
+		closeDone <- s.Close()
+	}()
+
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned before the in-flight Send finished")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	close(proceed)
+
+	if err := <-sendDone; err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close never returned after the in-flight Send finished")
+	}
+}
+
 func TestSessionLastUsedAdvances(t *testing.T) {
 	s, _ := startSession(t, Config{}, echoTurns("sess-1", "ok"))
 

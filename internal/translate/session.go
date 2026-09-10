@@ -354,7 +354,14 @@ func (s *Session) abort() {
 }
 
 // Close ends the session politely: closing stdin makes claude exit with 0.
+// It takes the turn lock first, so it can never race a Send that is still
+// writing to stdin or reading s.events — the two would otherwise fight over
+// the same channel and file descriptor. Callers that must not block for the
+// length of an in-flight turn should run Close in a goroutine.
 func (s *Session) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.state.Lock()
 	already := s.closed
 	s.closed = true

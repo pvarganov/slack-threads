@@ -622,8 +622,16 @@ func TestRewireClosesPreviousSyncerAndKeepsPumping(t *testing.T) {
 	a.startup(ctx)
 	a.checkToken(ctx)
 
-	if sy1.closeCalls != 1 {
-		t.Fatalf("previous syncer Close calls = %d, want 1", sy1.closeCalls)
+	// wire closes the previous syncer in a goroutine, so it does not block
+	// on a busy claude session; give it a moment to run.
+	deadline := time.After(2 * time.Second)
+
+	for sy1.closeCallCount() != 1 {
+		select {
+		case <-deadline:
+			t.Fatalf("previous syncer Close calls = %d, want 1", sy1.closeCallCount())
+		case <-time.After(time.Millisecond):
+		}
 	}
 
 	sy2.progress <- syncsvc.Progress{ThreadID: 7, Stage: syncsvc.StageDone}

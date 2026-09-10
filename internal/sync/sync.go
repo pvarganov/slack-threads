@@ -250,6 +250,7 @@ func (s *Service) AddThread(ctx context.Context, rawURL string) (Result, error) 
 		ChannelID: link.ChannelID,
 		ThreadTS:  link.ThreadTS,
 		Workspace: link.Workspace,
+		TeamID:    link.TeamID,
 	})
 	if err != nil {
 		return Result{}, err

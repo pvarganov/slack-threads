@@ -219,13 +219,23 @@ func changedCount(res syncsvc.Result) int {
 }
 
 // threadPermalink rebuilds the Slack link of the thread root, so the UI
-// can offer «Открыть в Slack».
+// can offer «Открыть в Slack». Threads added from an app.slack.com/client/...
+// link carry a team ID instead of a workspace subdomain (see
+// permalink.Link), so the link is rebuilt in that same shape for them.
 func threadPermalink(t store.Thread) string {
-	if t.Workspace == "" || t.ChannelID == "" || t.ThreadTS == "" {
+	if t.ChannelID == "" || t.ThreadTS == "" {
 		return ""
 	}
 
-	return "https://" + t.Workspace + ".slack.com/archives/" + t.ChannelID + "/p" + compactTS(t.ThreadTS)
+	switch {
+	case t.Workspace != "":
+		return "https://" + t.Workspace + ".slack.com/archives/" + t.ChannelID + "/p" + compactTS(t.ThreadTS)
+	case t.TeamID != "":
+		return "https://app.slack.com/client/" + t.TeamID + "/" + t.ChannelID +
+			"/thread/" + t.ChannelID + "-" + t.ThreadTS
+	default:
+		return ""
+	}
 }
 
 // compactTS turns "1717171717.000200" into the "p"-form Slack uses in

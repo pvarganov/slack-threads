@@ -20,6 +20,7 @@ no-op. Существующие миграции **не редактируютс
 | 1 | `initial schema` | все шесть таблиц и индексы |
 | 2 | `message deletion flag` | `messages.deleted` |
 | 3 | `thread refresh flag` | `threads.needs_refresh` |
+| 4 | `thread team id` | `threads.team_id` |
 
 Текущая версия схемы — `store.SchemaVersion` (равна числу миграций).
 
@@ -36,7 +37,8 @@ no-op. Существующие миграции **не редактируютс
 | `id` | INTEGER PK | локальный идентификатор, им оперирует UI и биндинги |
 | `channel_id` | TEXT | канал Slack (`C…`, `G…`, `D…`) |
 | `thread_ts` | TEXT | `ts` корневого сообщения треда |
-| `workspace` | TEXT | поддомен воркспейса из permalink, для обратной сборки ссылок |
+| `workspace` | TEXT | поддомен воркспейса из permalink, для обратной сборки ссылок; пусто для ссылок вида `app.slack.com/client/...` |
+| `team_id` | TEXT | team ID из ссылки `app.slack.com/client/...`, когда `workspace` пуст — для обратной сборки ссылки в том же виде |
 | `title` | TEXT | заголовок для списка (первая строка корневого сообщения) |
 | `added_at` | INTEGER | unix-время добавления |
 | `last_fetched_at` | INTEGER NULL | unix-время последней успешной синхронизации |

@@ -91,6 +91,14 @@ var migrations = []migration{
 			`ALTER TABLE threads ADD COLUMN needs_refresh INTEGER NOT NULL DEFAULT 0`,
 		},
 	},
+	{
+		name: "thread team id",
+		stmts: []string{
+			// app.slack.com/client/... permalinks carry a team ID instead of
+			// a workspace subdomain; kept so the permalink can be rebuilt.
+			`ALTER TABLE threads ADD COLUMN team_id TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 // SchemaVersion is the schema version a freshly migrated database carries.

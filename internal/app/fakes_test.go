@@ -145,6 +145,13 @@ func (f *fakeSyncer) Close() error {
 	return nil
 }
 
+func (f *fakeSyncer) closeCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.closeCalls
+}
+
 func (f *fakeSyncer) refreshedIDs() []int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()

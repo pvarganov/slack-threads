@@ -17,8 +17,13 @@ type Thread struct {
 	ChannelID string
 	// ThreadTS is the timestamp of the thread root message.
 	ThreadTS string
-	// Workspace is the slack.com subdomain the thread was added from.
+	// Workspace is the slack.com subdomain the thread was added from. Empty
+	// when the thread was added from an app.slack.com/client/... link, which
+	// carries TeamID instead.
 	Workspace string
+	// TeamID is the team ID an app.slack.com/client/... link carried, used to
+	// rebuild the permalink when Workspace is empty.
+	TeamID string
 	// Title is a short human-readable label shown in the thread list.
 	Title string
 	// AddedAt is when the thread was added locally.
@@ -38,7 +43,7 @@ type Thread struct {
 }
 
 // threadColumns is the column list shared by every thread SELECT.
-const threadColumns = `id, channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh`
+const threadColumns = `id, channel_id, thread_ts, workspace, team_id, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh`
 
 // AddThread stores a new thread and returns it with ID and AddedAt filled in.
 // It returns ErrThreadExists if the (ChannelID, ThreadTS) pair is already
@@ -53,9 +58,9 @@ func (s *Store) AddThread(ctx context.Context, t Thread) (Thread, error) {
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO threads (channel_id, thread_ts, workspace, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ChannelID, t.ThreadTS, t.Workspace, t.Title,
+		`INSERT INTO threads (channel_id, thread_ts, workspace, team_id, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ChannelID, t.ThreadTS, t.Workspace, t.TeamID, t.Title,
 		toUnix(t.AddedAt), nullableUnix(t.LastFetchedAt), boolToInt(t.Archived), t.ClaudeSessionID,
 		boolToInt(t.NeedsRefresh))
 	if err != nil {
@@ -214,7 +219,7 @@ func scanThread(sc rowScanner) (Thread, error) {
 		needsRefresh int
 	)
 
-	err := sc.Scan(&t.ID, &t.ChannelID, &t.ThreadTS, &t.Workspace, &t.Title,
+	err := sc.Scan(&t.ID, &t.ChannelID, &t.ThreadTS, &t.Workspace, &t.TeamID, &t.Title,
 		&addedAt, &lastFetched, &archived, &t.ClaudeSessionID, &needsRefresh)
 	if err != nil {
 		return Thread{}, err

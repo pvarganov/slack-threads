@@ -211,6 +211,7 @@ func TestAddThread(t *testing.T) {
 		ChannelID: "C024BE91L",
 		ThreadTS:  "1788872615.903009",
 		Workspace: "overgearcom",
+		TeamID:    "T024BE91L",
 		Title:     "deploy incident",
 	})
 	if err != nil {
@@ -231,7 +232,7 @@ func TestAddThread(t *testing.T) {
 	}
 
 	if got.ChannelID != added.ChannelID || got.ThreadTS != added.ThreadTS ||
-		got.Workspace != added.Workspace || got.Title != added.Title {
+		got.Workspace != added.Workspace || got.TeamID != added.TeamID || got.Title != added.Title {
 		t.Fatalf("GetThread = %+v, want %+v", got, added)
 	}
 

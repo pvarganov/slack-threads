@@ -331,6 +331,36 @@ func TestAddThreadStoresTranslatesAndSummarizes(t *testing.T) {
 	}
 }
 
+// TestAddThreadFromClientLinkStoresTeamID covers an app.slack.com/client/...
+// permalink, which carries a team ID instead of a workspace subdomain: the
+// team ID must be persisted so the UI can rebuild an "open in Slack" link
+// later, when Workspace is empty.
+func TestAddThreadFromClientLinkStoresTeamID(t *testing.T) {
+	t.Parallel()
+
+	svc, st, _, _ := newService(t)
+	ctx := context.Background()
+
+	clientURL := "https://app.slack.com/client/T024BE91L/C0LOAD/thread/C0LOAD-" + rootTS
+
+	if _, err := svc.AddThread(ctx, clientURL); err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	thread, err := st.GetThreadByKey(ctx, "C0LOAD", rootTS)
+	if err != nil {
+		t.Fatalf("GetThreadByKey: %v", err)
+	}
+
+	if thread.Workspace != "" {
+		t.Errorf("Workspace = %q, want empty for a client-shape link", thread.Workspace)
+	}
+
+	if thread.TeamID != "T024BE91L" {
+		t.Errorf("TeamID = %q, want T024BE91L", thread.TeamID)
+	}
+}
+
 // TestAddThreadPersistsClaudeSessionID checks that once the translator has
 // learned a thread's claude session id, the sync layer writes it back to
 // the thread row, so a restarted app (or a fresh session after an idle
