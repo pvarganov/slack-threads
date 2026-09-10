@@ -98,3 +98,34 @@ func truncate(s string, limit int) string {
 
 	return s[:limit] + "…"
 }
+
+// ResponseError is an answer that does not match the request: it is not the
+// JSON that was asked for, or translations are still missing after a retry.
+type ResponseError struct {
+	// Reason says what is wrong with the answer.
+	Reason string
+	// Missing lists the message IDs that came back without a translation.
+	Missing []string
+	// Raw is the answer itself, truncated.
+	Raw string
+}
+
+func (e *ResponseError) Error() string {
+	var b strings.Builder
+
+	b.WriteString("translate: bad translation answer")
+
+	if e.Reason != "" {
+		fmt.Fprintf(&b, ": %s", e.Reason)
+	}
+
+	if len(e.Missing) > 0 {
+		fmt.Fprintf(&b, " (missing %s)", strings.Join(e.Missing, ", "))
+	}
+
+	if e.Raw != "" {
+		fmt.Fprintf(&b, ": %s", e.Raw)
+	}
+
+	return b.String()
+}
