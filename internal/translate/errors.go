@@ -14,6 +14,12 @@ var ErrSessionClosed = errors.New("translate: session closed")
 // session's response timeout. The process is killed in that case.
 var ErrTimeout = errors.New("translate: timed out waiting for claude")
 
+// ErrBinaryNotFound is returned when the claude executable could not be
+// launched at all: it is missing from PATH, the configured path is wrong,
+// or the file is not executable. Nothing about the thread is at fault, so
+// the UI tells the user to install claude rather than to retry.
+var ErrBinaryNotFound = errors.New("translate: claude binary not found")
+
 // ProcessError means the claude process died instead of finishing the turn.
 type ProcessError struct {
 	// Err is the underlying exec error, nil on a clean but premature exit.

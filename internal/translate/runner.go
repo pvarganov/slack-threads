@@ -2,8 +2,10 @@ package translate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os/exec"
 )
 
@@ -69,10 +71,22 @@ func (r ExecRunner) Start(ctx context.Context, args []string) (Process, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
+		if isMissingBinary(err) {
+			return nil, fmt.Errorf("translate: start %s: %w: %w", bin, ErrBinaryNotFound, err)
+		}
+
 		return nil, fmt.Errorf("translate: start %s: %w", bin, err)
 	}
 
 	return &execProcess{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+}
+
+// isMissingBinary reports a start failure caused by the executable itself
+// being absent or not runnable, as opposed to a pipe or resource problem.
+func isMissingBinary(err error) bool {
+	return errors.Is(err, exec.ErrNotFound) ||
+		errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, fs.ErrPermission)
 }
 
 type execProcess struct {

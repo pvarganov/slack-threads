@@ -436,13 +436,24 @@ Slack медленно, а разовый перевод в чате не сох
 
 ### Task 15: Verify acceptance criteria
 
-- [ ] verify all requirements from Overview are implemented
-- [ ] verify edge cases are handled: тред без прав доступа, удалённый тред, тред только
+- [x] verify all requirements from Overview are implemented — все функции Overview
+      закрыты биндингами `App`: `AddThread`, `ListThreads`, `GetThread` (перевод + «Суть»),
+      `RefreshThread`/`RefreshAll`, `DeleteThread` (каскад по FK), `ArchiveThread`,
+      `DraftReply` (RU→EN + обратный перевод), `SendReply`, токен через keychain
+- [x] verify edge cases are handled: тред без прав доступа, удалённый тред, тред только
       с ботами, очень длинный тред с пагинацией, недоступный бинарник `claude`,
       протухший токен, обрыв сети посреди обновления
-- [ ] run full test suite (unit tests)
-- [ ] run linter - all issues must be fixed
-- [ ] verify test coverage meets project standard (80%+)
+  - ⚠️ найден и исправлен пробел: `ExecRunner.Start` возвращал безликую ошибку при
+    отсутствующем/неисполняемом бинарнике, и UI показывал текст «Не удалось выполнить
+    операцию». Добавлен `translate.ErrBinaryNotFound` и отдельное сообщение в `app.describe`
+  - ➕ новые тесты: `TestExecRunnerMissingBinary` (проверка сентинела),
+    `TestExecRunnerNonExecutableBinary`, `TestManagerReportsMissingBinary`,
+    `TestSyncThreadWithOnlyBotMessages`, `TestRefreshResumesAfterANetworkFailureMidSync`,
+    `TestSyncLongThreadTranslatesInChunks`, кейс «claude binary absent» в `TestUserErrorMessages`
+- [x] run full test suite (unit tests) — `go test ./...` зелёный, фронтенд: 27/27
+- [x] run linter - all issues must be fixed — `golangci-lint run ./...`: 0 issues, `go vet` чист
+- [x] verify test coverage meets project standard (80%+) — 88.3% по модулю
+      (app 84.7, config 93.7, permalink 94.5, slackapi 91.7, store 85.3, sync 85.4, translate 90.0)
 
 ### Task 16: [Final] Update documentation
 

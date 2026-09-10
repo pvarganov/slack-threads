@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -91,6 +93,12 @@ func TestUserErrorMessages(t *testing.T) {
 		},
 		{
 			name: "session closed", err: translate.ErrSessionClosed, want: "Сессия переводчика", fixable: true,
+		},
+		{
+			name:    "claude binary absent",
+			err:     fmt.Errorf("translate: start claude: %w: %w", translate.ErrBinaryNotFound, exec.ErrNotFound),
+			want:    "запустить claude",
+			fixable: true,
 		},
 		{
 			name:    "claude missing",

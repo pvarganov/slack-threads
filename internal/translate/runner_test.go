@@ -121,7 +121,43 @@ done
 func TestExecRunnerMissingBinary(t *testing.T) {
 	r := ExecRunner{Binary: filepath.Join(t.TempDir(), "definitely-not-here")}
 
-	if _, err := r.Start(context.Background(), buildArgs(Config{}, "")); err == nil {
+	_, err := r.Start(context.Background(), buildArgs(Config{}, ""))
+	if err == nil {
 		t.Fatal("Start must fail for a missing binary")
+	}
+
+	if !errors.Is(err, ErrBinaryNotFound) {
+		t.Errorf("err = %v, want ErrBinaryNotFound", err)
+	}
+}
+
+func TestExecRunnerNonExecutableBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the permission bit is a POSIX notion")
+	}
+
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatalf("writing the fake binary: %v", err)
+	}
+
+	_, err := ExecRunner{Binary: bin}.Start(context.Background(), buildArgs(Config{}, ""))
+	if !errors.Is(err, ErrBinaryNotFound) {
+		t.Errorf("err = %v, want ErrBinaryNotFound", err)
+	}
+}
+
+// A missing binary must survive the trip through the Manager: the session
+// call is where the whole app first touches claude.
+func TestManagerReportsMissingBinary(t *testing.T) {
+	m := NewManager(ExecRunner{Binary: filepath.Join(t.TempDir(), "nope")}, Config{
+		ResponseTimeout: time.Second,
+	})
+
+	defer m.Close()
+
+	_, err := m.Session(context.Background(), "T1", "")
+	if !errors.Is(err, ErrBinaryNotFound) {
+		t.Errorf("Session err = %v, want ErrBinaryNotFound", err)
 	}
 }

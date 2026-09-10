@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -713,5 +714,167 @@ func TestSyncPropagatesSummaryFailure(t *testing.T) {
 
 	if len(translations) != 3 {
 		t.Fatalf("stored %d translations, want the three made before the summary step", len(translations))
+	}
+}
+
+// A thread with nothing but bot posts must sync: Slack refuses to resolve
+// "B…" authors, so the inline username is the only name there is.
+func TestSyncThreadWithOnlyBotMessages(t *testing.T) {
+	svc, st, slack, tr := newService(t)
+
+	slack.threads["C0LOAD/"+rootTS] = []slackapi.Message{
+		{
+			TS: rootTS, ThreadTS: rootTS, BotID: "B0CI", Username: "CI",
+			Text: "Build 42 failed", Raw: []byte(`{"ts":"root"}`),
+		},
+		{
+			TS: replyTS, ThreadTS: rootTS, BotID: "B0PAGER", Username: "Pager",
+			Text: "Paging on-call", Raw: []byte(`{"ts":"reply"}`),
+		},
+	}
+
+	res, err := svc.AddThread(context.Background(), threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if res.Fetched != 2 || res.Translated != 2 {
+		t.Errorf("fetched/translated = %d/%d, want 2/2", res.Fetched, res.Translated)
+	}
+
+	if res.Thread.Title != "Build 42 failed" {
+		t.Errorf("title = %q, want the bot root text", res.Thread.Title)
+	}
+
+	if len(tr.requests) != 1 {
+		t.Fatalf("translation requests = %d, want 1", len(tr.requests))
+	}
+
+	for _, m := range tr.requests[0] {
+		if m.Author != "CI" && m.Author != "Pager" {
+			t.Errorf("author = %q, want the inline bot username", m.Author)
+		}
+	}
+
+	msgs, err := st.ListMessages(context.Background(), res.Thread.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	if len(msgs) != 2 || msgs[0].UserID != "B0CI" {
+		t.Errorf("stored messages = %+v, want both bot posts keyed by bot id", msgs)
+	}
+}
+
+// A network failure in the middle of a sync must not lose the messages that
+// were already stored: the next refresh only has the translation left to do
+// and does not re-ask Slack for anything it already has.
+func TestRefreshResumesAfterANetworkFailureMidSync(t *testing.T) {
+	svc, st, slack, tr := newService(t)
+
+	netDown := &net.OpError{Op: "read", Err: errors.New("connection reset by peer")}
+	tr.err = netDown
+
+	_, err := svc.AddThread(context.Background(), threadURL)
+	if !errors.Is(err, netDown) {
+		t.Fatalf("AddThread err = %v, want the network error", err)
+	}
+
+	thread, err := st.GetThreadByKey(context.Background(), "C0LOAD", rootTS)
+	if err != nil {
+		t.Fatalf("GetThreadByKey: %v", err)
+	}
+
+	stored, err := st.ListMessages(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	if len(stored) != 3 {
+		t.Fatalf("stored messages = %d, want all 3 kept after the failure", len(stored))
+	}
+
+	if got, err := st.ListTranslations(context.Background(), thread.ID); err != nil {
+		t.Fatalf("ListTranslations: %v", err)
+	} else if len(got) != 0 {
+		t.Errorf("translations = %d, want none before the retry", len(got))
+	}
+
+	// The network is back: the retry translates the whole thread.
+	tr.err = nil
+	fetchesBefore := slack.fetches
+
+	res, err := svc.RefreshThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("RefreshThread: %v", err)
+	}
+
+	if res.Translated != 3 {
+		t.Errorf("translated = %d, want 3", res.Translated)
+	}
+
+	if res.Inserted != 0 || res.Unchanged != 3 {
+		t.Errorf("inserted/unchanged = %d/%d, want 0/3", res.Inserted, res.Unchanged)
+	}
+
+	if slack.fetches != fetchesBefore+1 {
+		t.Errorf("fetches = %d, want exactly one more", slack.fetches)
+	}
+}
+
+// A long thread is translated in chunks, and every chunk reports progress
+// so the UI can move the bar on a thread of any size.
+func TestSyncLongThreadTranslatesInChunks(t *testing.T) {
+	svc, _, slack, tr := newService(t, sync.WithChunkSize(10))
+
+	long := make([]slackapi.Message, 0, 25)
+
+	for i := range 25 {
+		ts := fmt.Sprintf("17000001%02d.000100", i)
+		if i == 0 {
+			ts = rootTS
+		}
+
+		long = append(long, slackapi.Message{
+			TS: ts, ThreadTS: rootTS, User: "U1",
+			Text: fmt.Sprintf("message %d", i), Raw: []byte(`{}`),
+		})
+	}
+
+	slack.threads["C0LOAD/"+rootTS] = long
+
+	res, err := svc.AddThread(context.Background(), threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if res.Fetched != 25 || res.Translated != 25 {
+		t.Errorf("fetched/translated = %d/%d, want 25/25", res.Fetched, res.Translated)
+	}
+
+	if len(tr.requests) != 3 {
+		t.Fatalf("requests = %d, want 3 chunks of at most 10", len(tr.requests))
+	}
+
+	// Every request carries the already translated messages as context, so
+	// the last one is the largest.
+	if got := len(pending(tr.requests[2])); got != 5 {
+		t.Errorf("last chunk = %d messages, want 5", got)
+	}
+
+	if got := len(tr.requests[2]) - len(pending(tr.requests[2])); got != 20 {
+		t.Errorf("context in the last request = %d, want the 20 translated ones", got)
+	}
+
+	var last sync.Progress
+
+	for _, p := range drain(svc) {
+		if p.Stage == sync.StageTranslating {
+			last = p
+		}
+	}
+
+	if last.Done != 25 || last.Total != 25 {
+		t.Errorf("last translating progress = %d/%d, want 25/25", last.Done, last.Total)
 	}
 }

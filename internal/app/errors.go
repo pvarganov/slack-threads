@@ -114,6 +114,9 @@ func describe(err error) (string, bool) {
 	case errors.Is(err, translate.ErrSessionClosed):
 		return "Сессия переводчика закрылась. Повторите обновление — она запустится заново.", true
 
+	case errors.Is(err, translate.ErrBinaryNotFound):
+		return "Не удалось запустить claude: бинарник не найден или не исполняем. Установите Claude Code и проверьте, что он доступен в PATH.", true
+
 	case isProcessError(err):
 		return "Не удалось запустить claude. Проверьте, что бинарник установлен и доступен в PATH.", true
 
