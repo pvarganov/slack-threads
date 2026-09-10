@@ -94,21 +94,30 @@ Slack медленно, а разовый перевод в чате не сох
 Спайк: до написания кода зафиксировать реальные интерфейсы CLI и Slack API, чтобы не
 строить обвязку на предположениях.
 
-- [ ] выполнить `claude --help` и записать в `docs/claude-cli-contract.md` фактические
+- [x] выполнить `claude --help` и записать в `docs/claude-cli-contract.md` фактические
       флаги: `-p`, `--input-format stream-json`, `--output-format stream-json`,
       `--verbose`, `--append-system-prompt`, `--model`, `--resume`, флаги ограничения
       инструментов и режима разрешений
-- [ ] запустить `claude` вручную в режиме stream-json, отправить одно сообщение и
+- [x] запустить `claude` вручную в режиме stream-json, отправить одно сообщение и
       записать в тот же документ реальные формы событий stdin/stdout (`user`,
       `assistant`, `result`, поле `session_id`)
-- [ ] `go mod init github.com/pavelvarganov/slack-threads`, установить Wails CLI,
+- [x] `go mod init github.com/pavelvarganov/slack-threads`, установить Wails CLI,
       сгенерировать каркас `wails init` с vanilla-фронтендом
-- [ ] создать структуру каталогов: `cmd/slack-threads`, `internal/permalink`,
+- [x] создать структуру каталогов: `cmd/slack-threads`, `internal/permalink`,
       `internal/store`, `internal/slackapi`, `internal/translate`, `internal/sync`,
       `internal/app`, `frontend`
-- [ ] добавить `Makefile` (цели `test`, `lint`, `build`, `dev`) и `.golangci.yml`
-- [ ] добавить smoke-тест, проверяющий что пакеты собираются (`go build ./...` в CI-цели)
-- [ ] run tests - must pass before next task
+- [x] добавить `Makefile` (цели `test`, `lint`, `build`, `dev`) и `.golangci.yml`
+- [x] добавить smoke-тест, проверяющий что пакеты собираются (`go build ./...` в CI-цели)
+- [x] run tests - must pass before next task
+
+➕ Уточнения по факту реализации:
+- для изоляции переводчика нужны **оба** флага `--tools "" --strict-mcp-config`:
+  без второго MCP-серверы пользователя подключаются даже при пустом списке инструментов
+- Wails собирает корень модуля, поэтому точка входа продублирована: `main.go` в корне
+  (нужен `wails build`) и `cmd/slack-threads/main.go` — оба трёхстрочные обёртки над
+  `internal/app.Run`; встраивание ассетов вынесено в пакет `frontend`
+- добавлен `internal/config` (в списке каталогов его не было, но он есть в Technical Details)
+- smoke-тест живёт в `internal/buildsmoke` и прогоняет `go build ./...` и `go vet ./...`
 
 ### Task 2: Разбор Slack permalink
 
