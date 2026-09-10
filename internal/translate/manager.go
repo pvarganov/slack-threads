@@ -159,7 +159,7 @@ func (m *Manager) reapLocked() {
 			continue
 		}
 
-		if s.LastUsed().After(deadline) {
+		if s.Busy() || s.LastUsed().After(deadline) {
 			continue
 		}
 

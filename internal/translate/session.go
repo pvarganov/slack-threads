@@ -70,6 +70,7 @@ type Session struct {
 	sessionID string
 	closed    bool
 	lastUsed  time.Time
+	busy      bool
 
 	stderr     *stderrBuffer
 	stderrDone chan struct{}
@@ -178,6 +179,17 @@ func (s *Session) Closed() bool {
 	return s.closed
 }
 
+// Busy reports whether a turn is currently in flight. The manager must not
+// reap a busy session: LastUsed is only bumped once the turn completes, so
+// a long-running turn would otherwise look idle to reapLocked while it is
+// still reading from s.events, racing Close's own drain of that channel.
+func (s *Session) Busy() bool {
+	s.state.Lock()
+	defer s.state.Unlock()
+
+	return s.busy
+}
+
 // Send runs one turn: the prompt goes to stdin and the assistant text is
 // returned once the result event arrives. Any failure kills the process,
 // because a half-consumed stream cannot be reused.
@@ -188,6 +200,9 @@ func (s *Session) Send(ctx context.Context, prompt string) (string, error) {
 	if s.Closed() {
 		return "", ErrSessionClosed
 	}
+
+	s.setBusy(true)
+	defer s.setBusy(false)
 
 	if err := s.writeRequest(prompt); err != nil {
 		s.abort()
@@ -317,6 +332,13 @@ func (s *Session) touch(t time.Time) {
 	defer s.state.Unlock()
 
 	s.lastUsed = t
+}
+
+func (s *Session) setBusy(busy bool) {
+	s.state.Lock()
+	defer s.state.Unlock()
+
+	s.busy = busy
 }
 
 // abort kills a session that failed mid-turn so it is never reused.

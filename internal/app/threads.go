@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pavelvarganov/slack-threads/internal/permalink"
 	"github.com/pavelvarganov/slack-threads/internal/slackapi"
 	"github.com/pavelvarganov/slack-threads/internal/store"
 	syncsvc "github.com/pavelvarganov/slack-threads/internal/sync"
@@ -33,6 +34,7 @@ type Syncer interface {
 type Storage interface {
 	ListThreads(ctx context.Context, includeArchived bool) ([]store.Thread, error)
 	GetThread(ctx context.Context, id int64) (store.Thread, error)
+	GetThreadByKey(ctx context.Context, channelID, threadTS string) (store.Thread, error)
 	ListMessages(ctx context.Context, threadID int64) ([]store.Message, error)
 	ListTranslations(ctx context.Context, threadID int64) (map[int64]store.Translation, error)
 	GetSummary(ctx context.Context, threadID int64) (store.Summary, error)
@@ -48,13 +50,25 @@ func (a *App) AddThread(rawURL string) (ThreadView, error) {
 		return ThreadView{}, errNotReady()
 	}
 
+	ctx := a.context()
+
+	// A permalink that resolves to an already-tracked thread must be
+	// locked under its threadKey, the same key RefreshThread and
+	// DeleteThread use, or a concurrent call on that thread would race
+	// with this one instead of failing fast with ErrBusy.
 	key := urlKey(rawURL)
+	if a.store != nil {
+		if link, err := permalink.Parse(rawURL); err == nil {
+			if existing, err := a.store.GetThreadByKey(ctx, link.ChannelID, link.ThreadTS); err == nil {
+				key = threadKey(existing.ID)
+			}
+		}
+	}
+
 	if !a.locks.acquire(key) {
 		return ThreadView{}, userError(ErrBusy)
 	}
 	defer a.locks.release(key)
-
-	ctx := a.context()
 
 	res, err := a.sync.AddThread(ctx, rawURL)
 	if err != nil {
@@ -196,6 +210,12 @@ func (a *App) DraftReply(id int64, ru string) (DraftView, error) {
 		return DraftView{}, errNotReady()
 	}
 
+	key := threadKey(id)
+	if !a.locks.acquire(key) {
+		return DraftView{}, userError(ErrBusy)
+	}
+	defer a.locks.release(key)
+
 	draft, err := a.sync.DraftReply(a.context(), id, ru)
 	if err != nil {
 		return DraftView{}, userError(err)
@@ -210,6 +230,12 @@ func (a *App) SendReply(id int64, en string) (SentView, error) {
 	if a.sync == nil {
 		return SentView{}, errNotReady()
 	}
+
+	key := threadKey(id)
+	if !a.locks.acquire(key) {
+		return SentView{}, userError(ErrBusy)
+	}
+	defer a.locks.release(key)
 
 	sent, err := a.sync.SendReply(a.context(), id, en)
 	if err != nil {

@@ -208,6 +208,10 @@ func Run(assets embed.FS) error {
 		return err
 	}
 
+	if err := cfg.EnsureDataDir(); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 
 	db, err := store.Open(ctx, cfg.DatabasePath)

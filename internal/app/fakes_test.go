@@ -217,6 +217,20 @@ func (s *fakeStorage) GetThread(_ context.Context, id int64) (store.Thread, erro
 	return t, nil
 }
 
+func (s *fakeStorage) GetThreadByKey(_ context.Context, channelID, threadTS string) (store.Thread, error) {
+	if s.getErr != nil {
+		return store.Thread{}, s.getErr
+	}
+
+	for _, t := range s.threads {
+		if t.ChannelID == channelID && t.ThreadTS == threadTS {
+			return t, nil
+		}
+	}
+
+	return store.Thread{}, store.ErrNotFound
+}
+
 func (s *fakeStorage) ListMessages(_ context.Context, threadID int64) ([]store.Message, error) {
 	return s.messages[threadID], nil
 }
