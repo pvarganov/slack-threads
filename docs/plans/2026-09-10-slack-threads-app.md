@@ -133,20 +133,20 @@ Slack медленно, а разовый перевод в чате не сох
 
 ### Task 3: Хранилище — схема, миграции, треды
 
-- [ ] написать тесты для `store.Open` на временной базе: создание схемы, идемпотентность
+- [x] написать тесты для `store.Open` на временной базе: создание схемы, идемпотентность
       повторного открытия, применение миграций по версии
-- [ ] реализовать `internal/store` на `modernc.org/sqlite` с версионированными миграциями
-- [ ] описать схему: `threads` (id, channel_id, thread_ts, workspace, title, added_at,
+- [x] реализовать `internal/store` на `modernc.org/sqlite` с версионированными миграциями
+- [x] описать схему: `threads` (id, channel_id, thread_ts, workspace, title, added_at,
       last_fetched_at, archived, claude_session_id), `messages` (id, thread_id, ts,
       user_id, text, raw_json, edited_ts, text_hash), `translations` (message_id, text_ru,
       model, created_at), `summaries` (thread_id, text_ru, based_on_ts, updated_at),
       `users` (id, display_name, real_name, is_bot, updated_at), `drafts` (thread_id,
       text_ru, text_en, back_ru, updated_at)
-- [ ] написать тесты на CRUD тредов: добавление, список, получение, архивирование,
+- [x] написать тесты на CRUD тредов: добавление, список, получение, архивирование,
       удаление с каскадом (сообщения, переводы, суть, черновик уходят вместе)
-- [ ] написать тест на уникальность треда по паре (channel_id, thread_ts)
-- [ ] реализовать методы работы с тредами
-- [ ] run tests - must pass before next task
+- [x] написать тест на уникальность треда по паре (channel_id, thread_ts)
+- [x] реализовать методы работы с тредами
+- [x] run tests - must pass before next task
 
 ### Task 4: Хранилище — сообщения, переводы, пользователи
 
