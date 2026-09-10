@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pavelvarganov/slack-threads/internal/slackapi"
 	"github.com/pavelvarganov/slack-threads/internal/store"
 	syncsvc "github.com/pavelvarganov/slack-threads/internal/sync"
 )
@@ -87,5 +88,61 @@ func TestChangedCountSumsTheDelta(t *testing.T) {
 	got := changedCount(syncsvc.Result{Inserted: 2, Updated: 1, Deleted: 3, Unchanged: 40})
 	if got != 6 {
 		t.Errorf("changedCount = %d, want 6", got)
+	}
+}
+
+func TestMessageViewsRenderBlocksForBothLanguages(t *testing.T) {
+	msgs := []store.Message{{ID: 1, TS: "1717171717.000100", UserID: "U1", Text: "hi <@U2>\n```go\nx := 1\n```"}}
+	translations := map[int64]store.Translation{1: {MessageID: 1, TextRU: "привет `код`"}}
+	users := map[string]store.User{
+		"U1": {ID: "U1", DisplayName: "alice"},
+		"U2": {ID: "U2", RealName: "Bob Smith"},
+	}
+
+	got := messageViews(msgs, translations, users)
+	if len(got) != 1 {
+		t.Fatalf("views = %d, want 1", len(got))
+	}
+
+	view := got[0]
+	if len(view.Blocks) != 2 {
+		t.Fatalf("blocks = %d, want a paragraph and a code block", len(view.Blocks))
+	}
+
+	if view.Blocks[1].Kind != slackapi.BlockCode || view.Blocks[1].Lang != "go" {
+		t.Errorf("second block = %+v, want a go code block", view.Blocks[1])
+	}
+
+	// The mention has to carry the resolved name, not the bare ID: that is
+	// the whole point of passing the user cache into the renderer.
+	var mention string
+
+	for _, span := range view.Blocks[0].Spans {
+		if span.Kind == slackapi.SpanUser {
+			mention = span.Text
+		}
+	}
+
+	if mention != "@Bob Smith" {
+		t.Errorf("mention rendered as %q, want the resolved name", mention)
+	}
+
+	if len(view.BlocksRU) != 1 || len(view.BlocksRU[0].Spans) == 0 {
+		t.Errorf("translation blocks = %+v, want one rendered paragraph", view.BlocksRU)
+	}
+}
+
+func TestMessageViewsWithoutTranslationHaveNoRussianBlocks(t *testing.T) {
+	got := messageViews(
+		[]store.Message{{ID: 1, TS: "1717171717.000100", UserID: "U1", Text: "hi"}},
+		nil, nil,
+	)
+
+	if len(got[0].BlocksRU) != 0 {
+		t.Errorf("blocksRu = %+v, want none for an untranslated message", got[0].BlocksRU)
+	}
+
+	if got[0].Author != "U1" {
+		t.Errorf("author = %q, want the raw ID fallback", got[0].Author)
 	}
 }

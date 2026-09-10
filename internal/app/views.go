@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pavelvarganov/slack-threads/internal/slackapi"
 	"github.com/pavelvarganov/slack-threads/internal/store"
 	syncsvc "github.com/pavelvarganov/slack-threads/internal/sync"
 )
@@ -26,17 +27,22 @@ type ThreadItem struct {
 // MessageView is one message in the thread feed: the Slack original and
 // its Russian translation side by side.
 type MessageView struct {
-	ID        int64          `json:"id"`
-	TS        string         `json:"ts"`
-	Time      string         `json:"time"`
-	Author    string         `json:"author"`
-	AuthorID  string         `json:"authorId"`
-	IsBot     bool           `json:"isBot"`
-	Text      string         `json:"text"`
-	TextRU    string         `json:"textRu"`
-	Edited    bool           `json:"edited"`
-	Deleted   bool           `json:"deleted"`
-	Reactions []ReactionView `json:"reactions"`
+	ID       int64  `json:"id"`
+	TS       string `json:"ts"`
+	Time     string `json:"time"`
+	Author   string `json:"author"`
+	AuthorID string `json:"authorId"`
+	IsBot    bool   `json:"isBot"`
+	Text     string `json:"text"`
+	TextRU   string `json:"textRu"`
+	// Blocks is the original text rendered into paragraphs, quotes and
+	// code blocks, so the frontend never has to parse Slack mrkdwn.
+	Blocks []slackapi.Block `json:"blocks"`
+	// BlocksRU is the same rendering of the Russian translation.
+	BlocksRU  []slackapi.Block `json:"blocksRu"`
+	Edited    bool             `json:"edited"`
+	Deleted   bool             `json:"deleted"`
+	Reactions []ReactionView   `json:"reactions"`
 }
 
 // ReactionView is an emoji reaction shown as-is under a message.
@@ -55,10 +61,12 @@ type DraftView struct {
 
 // ThreadView is everything the right column needs to render a thread.
 type ThreadView struct {
-	Thread   ThreadItem    `json:"thread"`
-	Summary  string        `json:"summary"`
-	Messages []MessageView `json:"messages"`
-	Draft    DraftView     `json:"draft"`
+	Thread  ThreadItem `json:"thread"`
+	Summary string     `json:"summary"`
+	// SummaryBlocks is the «Суть» block rendered the same way messages are.
+	SummaryBlocks []slackapi.Block `json:"summaryBlocks"`
+	Messages      []MessageView    `json:"messages"`
+	Draft         DraftView        `json:"draft"`
 }
 
 // RefreshOutcome is one thread's result inside RefreshAll. A thread that
@@ -102,6 +110,7 @@ func messageViews(
 	msgs []store.Message, translations map[int64]store.Translation, users map[string]store.User,
 ) []MessageView {
 	out := make([]MessageView, 0, len(msgs))
+	names := userNames(users)
 
 	for _, m := range msgs {
 		user := users[m.UserID]
@@ -115,6 +124,8 @@ func messageViews(
 			IsBot:     user.IsBot,
 			Text:      m.Text,
 			TextRU:    translations[m.ID].TextRU,
+			Blocks:    slackapi.RenderMrkdwn(m.Text, names),
+			BlocksRU:  slackapi.RenderMrkdwn(translations[m.ID].TextRU, names),
 			Edited:    m.EditedTS != "",
 			Deleted:   m.Deleted,
 			Reactions: reactions(m.RawJSON),
@@ -122,6 +133,16 @@ func messageViews(
 	}
 
 	return out
+}
+
+// userNames maps Slack IDs onto the labels mentions are rendered with.
+func userNames(users map[string]store.User) map[string]string {
+	names := make(map[string]string, len(users))
+	for id, u := range users {
+		names[id] = authorName(id, u)
+	}
+
+	return names
 }
 
 // authorName prefers the handle Slack shows, then the full name, and falls

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pavelvarganov/slack-threads/internal/slackapi"
 	"github.com/pavelvarganov/slack-threads/internal/store"
 	syncsvc "github.com/pavelvarganov/slack-threads/internal/sync"
 )
@@ -236,6 +237,7 @@ func (a *App) threadView(ctx context.Context, id int64) (ThreadView, error) {
 	switch {
 	case err == nil:
 		view.Summary = summary.TextRU
+		view.SummaryBlocks = slackapi.RenderMrkdwn(summary.TextRU, userNames(users))
 	case !errors.Is(err, store.ErrNotFound):
 		return ThreadView{}, userError(err)
 	}
