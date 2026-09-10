@@ -30,10 +30,12 @@ type TokenStatus struct {
 
 // checkToken verifies the stored token and caches the outcome.
 func (a *App) checkToken(ctx context.Context) TokenStatus {
-	ctx, cancel := context.WithTimeout(ctx, tokenCheckTimeout)
+	// The timeout bounds the auth.test call only: the wiring below has to
+	// outlive it, its context lives as long as the window does.
+	checkCtx, cancel := context.WithTimeout(ctx, tokenCheckTimeout)
 	defer cancel()
 
-	_, info, err := config.ResolveToken(ctx, a.tokens, a.checker)
+	token, info, err := config.ResolveToken(checkCtx, a.tokens, a.checker)
 
 	status := TokenStatus{OK: true, User: info.User, Team: info.Team}
 	if err != nil {
@@ -43,6 +45,12 @@ func (a *App) checkToken(ctx context.Context) TokenStatus {
 	a.mu.Lock()
 	a.token = status
 	a.mu.Unlock()
+
+	// Only a token Slack accepted is worth building a Slack client and a
+	// translator around.
+	if status.OK {
+		a.wire(ctx, token)
+	}
 
 	return status
 }
