@@ -34,6 +34,8 @@ type fakeSlack struct {
 	posted []postedReply
 	// postErr, when set, fails every PostMessage call.
 	postErr error
+	// resolveErr, when set, fails every ResolveUsers call.
+	resolveErr error
 }
 
 // postedReply is one recorded chat.postMessage call.
@@ -72,6 +74,10 @@ func (f *fakeSlack) FetchThread(_ context.Context, channelID, threadTS string) (
 }
 
 func (f *fakeSlack) ResolveUsers(_ context.Context, ids []string) (map[string]slackapi.User, error) {
+	if f.resolveErr != nil {
+		return nil, f.resolveErr
+	}
+
 	out := make(map[string]slackapi.User, len(ids))
 
 	for _, id := range ids {
@@ -96,6 +102,18 @@ type fakeTranslator struct {
 	drafts []string
 	// draftErr, when set, fails every DraftReply call.
 	draftErr error
+	// sessionID is what SessionID reports; sessionIDErr, when set, fails it.
+	sessionID    string
+	sessionIDErr error
+	// hallucinateID, when set, makes TranslateMessages append one more
+	// translation for an id nobody asked for, the way a model that
+	// invents an id would.
+	hallucinateID string
+	// closedThreads records every CloseThread call.
+	closedThreads []string
+	closeThrErr   error
+	// closeCalls counts every Close call.
+	closeCalls int
 }
 
 func (f *fakeTranslator) DraftReply(_ context.Context, threadID, ru string) (string, string, error) {
@@ -129,6 +147,10 @@ func (f *fakeTranslator) TranslateMessages(
 		out = append(out, translate.Translation{ID: m.ID, TextRU: "ru:" + m.Text})
 	}
 
+	if f.hallucinateID != "" {
+		out = append(out, translate.Translation{ID: f.hallucinateID, TextRU: "ru:invented"})
+	}
+
 	return out, nil
 }
 
@@ -142,6 +164,22 @@ func (f *fakeTranslator) Summarize(
 	f.summaries = append(f.summaries, translated)
 
 	return f.summary, nil
+}
+
+func (f *fakeTranslator) SessionID(_ context.Context, _ string) (string, error) {
+	return f.sessionID, f.sessionIDErr
+}
+
+func (f *fakeTranslator) CloseThread(threadID string) error {
+	f.closedThreads = append(f.closedThreads, threadID)
+
+	return f.closeThrErr
+}
+
+func (f *fakeTranslator) Close() error {
+	f.closeCalls++
+
+	return nil
 }
 
 // pending lists the IDs a recorded request actually asked to translate.
@@ -290,6 +328,65 @@ func TestAddThreadStoresTranslatesAndSummarizes(t *testing.T) {
 
 	if key := tr.keys[0]; key != fmt.Sprint(thread.ID) {
 		t.Errorf("session key = %q, want the local thread ID %d", key, thread.ID)
+	}
+}
+
+// TestAddThreadPersistsClaudeSessionID checks that once the translator has
+// learned a thread's claude session id, the sync layer writes it back to
+// the thread row, so a restarted app (or a fresh session after an idle
+// reap) can resume the same conversation via --resume.
+func TestAddThreadPersistsClaudeSessionID(t *testing.T) {
+	t.Parallel()
+
+	svc, st, _, tr := newService(t)
+	tr.sessionID = "sess-99"
+	ctx := context.Background()
+
+	if _, err := svc.AddThread(ctx, threadURL); err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	thread, err := st.GetThreadByKey(ctx, "C0LOAD", rootTS)
+	if err != nil {
+		t.Fatalf("GetThreadByKey: %v", err)
+	}
+
+	if thread.ClaudeSessionID != "sess-99" {
+		t.Errorf("ClaudeSessionID = %q, want %q", thread.ClaudeSessionID, "sess-99")
+	}
+}
+
+// TestServiceCloseThreadDelegatesToTranslator checks that closing a
+// thread's session, e.g. after it is deleted, reaches the translator with
+// the same session key used to sync it.
+func TestServiceCloseThreadDelegatesToTranslator(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _, tr := newService(t)
+
+	if err := svc.CloseThread(42); err != nil {
+		t.Fatalf("CloseThread: %v", err)
+	}
+
+	if len(tr.closedThreads) != 1 || tr.closedThreads[0] != "42" {
+		t.Errorf("closedThreads = %v, want [%q]", tr.closedThreads, "42")
+	}
+}
+
+// TestServiceCloseDelegatesToTranslator checks that closing the whole
+// service, e.g. when a token change replaces it, shuts every claude session
+// the translator owns down.
+func TestServiceCloseDelegatesToTranslator(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _, tr := newService(t)
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if tr.closeCalls != 1 {
+		t.Errorf("translator Close calls = %d, want 1", tr.closeCalls)
 	}
 }
 
@@ -652,6 +749,38 @@ func TestSyncPropagatesTranslatorFailure(t *testing.T) {
 	}
 }
 
+func TestSyncPropagatesResolveUsersFailure(t *testing.T) {
+	t.Parallel()
+
+	svc, st, slack, _ := newService(t)
+	slack.resolveErr = errors.New("slack users.info down")
+	ctx := context.Background()
+
+	if _, err := svc.AddThread(ctx, threadURL); err == nil || !errors.Is(err, slack.resolveErr) {
+		t.Fatalf("AddThread error = %v, want the resolve failure", err)
+	}
+
+	// The thread is stored even though name resolution failed, so a retry
+	// only has to resolve names and translate, not re-add the thread.
+	thread, err := st.GetThreadByKey(ctx, "C0LOAD", rootTS)
+	if err != nil {
+		t.Fatalf("GetThreadByKey: %v", err)
+	}
+
+	if _, err := st.ListMessages(ctx, thread.ID); err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	msgs, err := st.ListMessages(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+
+	if len(msgs) != 0 {
+		t.Fatalf("stored %d messages, want none: the fetch failed before any upsert", len(msgs))
+	}
+}
+
 func TestSyncSkipsMessagesWithoutText(t *testing.T) {
 	t.Parallel()
 
@@ -679,6 +808,40 @@ func TestSyncSkipsMessagesWithoutText(t *testing.T) {
 
 	if got := len(tr.requests[0]); got != 3 {
 		t.Errorf("request carried %d messages, want the join message left out", got)
+	}
+}
+
+// TestSaveTranslationsSkipsHallucinatedIDs checks that a translation for an
+// id that was never sent to the model — the model inventing an id — is
+// dropped instead of being saved or crashing the sync.
+func TestSaveTranslationsSkipsHallucinatedIDs(t *testing.T) {
+	t.Parallel()
+
+	svc, st, _, tr := newService(t)
+	tr.hallucinateID = "1700000000.999999"
+	ctx := context.Background()
+
+	res, err := svc.AddThread(ctx, threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if res.Translated != 3 {
+		t.Errorf("Translated = %d, want the invented id excluded from the count", res.Translated)
+	}
+
+	thread, err := st.GetThreadByKey(ctx, "C0LOAD", rootTS)
+	if err != nil {
+		t.Fatalf("GetThreadByKey: %v", err)
+	}
+
+	translations, err := st.ListTranslations(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("ListTranslations: %v", err)
+	}
+
+	if len(translations) != 3 {
+		t.Errorf("stored %d translations, want only the three real messages", len(translations))
 	}
 }
 

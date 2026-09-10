@@ -258,6 +258,34 @@ func TestChainStorePropagatesRealErrors(t *testing.T) {
 	}
 }
 
+// TestChainStoreSetTokenRefusesWhenEnvironmentShadowsIt checks that saving a
+// token while SLACK_THREADS_TOKEN is set reports ErrReadOnlyStore instead of
+// silently writing to the keychain: Token would keep preferring the
+// environment value, so the write would never be read back.
+func TestChainStoreSetTokenRefusesWhenEnvironmentShadowsIt(t *testing.T) {
+	env := config.EnvStore{Var: "T", Getenv: func(string) string { return "xoxp-env" }}
+	kc := &memStore{}
+
+	chain := config.ChainStore{Stores: []config.TokenStore{env, kc}}
+
+	if err := chain.SetToken("xoxp-new"); !errors.Is(err, config.ErrReadOnlyStore) {
+		t.Errorf("SetToken = %v, want ErrReadOnlyStore", err)
+	}
+
+	if kc.token != "" {
+		t.Errorf("keychain token = %q, want the write skipped entirely", kc.token)
+	}
+
+	got, err := chain.Token()
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+
+	if got != "xoxp-env" {
+		t.Errorf("Token = %q, want the environment value still in effect", got)
+	}
+}
+
 func TestChainStoreWriteFailsWhenAllReadOnly(t *testing.T) {
 	chain := config.ChainStore{Stores: []config.TokenStore{config.EnvStore{Var: "T"}}}
 

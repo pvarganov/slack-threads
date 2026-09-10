@@ -43,6 +43,7 @@ claude -p \
   --strict-mcp-config \
   --tools "" \
   --permission-mode dontAsk \
+  --permission-prompts none \
   --model opus \
   --append-system-prompt "<правила перевода + глоссарий>"
 ```

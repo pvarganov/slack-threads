@@ -110,6 +110,7 @@ type Store interface {
 	SetThreadFetched(ctx context.Context, id int64, at time.Time) error
 	SetThreadTitle(ctx context.Context, id int64, title string) error
 	SetThreadNeedsRefresh(ctx context.Context, id int64, needs bool) error
+	SetThreadSession(ctx context.Context, id int64, sessionID string) error
 	GetDraft(ctx context.Context, threadID int64) (store.Draft, error)
 	SaveDraft(ctx context.Context, d store.Draft) error
 	DeleteDraft(ctx context.Context, threadID int64) error
@@ -121,6 +122,12 @@ type Translator interface {
 	TranslateMessages(ctx context.Context, threadID string, msgs []translate.Message) ([]translate.Translation, error)
 	Summarize(ctx context.Context, threadID string, translated []translate.Message) (string, error)
 	DraftReply(ctx context.Context, threadID, ru string) (en, backRU string, err error)
+	// SessionID returns the thread's claude session id, once known.
+	SessionID(ctx context.Context, threadID string) (string, error)
+	// CloseThread shuts a thread's claude session down.
+	CloseThread(threadID string) error
+	// Close shuts every claude session down.
+	Close() error
 }
 
 // Service adds and refreshes threads on top of the store, the Slack client
@@ -195,6 +202,18 @@ func New(st Store, slack slackapi.Client, tr Translator, opts ...Option) *Servic
 // stopped reading only misses intermediate updates.
 func (s *Service) Progress() <-chan Progress {
 	return s.progress
+}
+
+// CloseThread shuts down the claude session of one thread, e.g. when the
+// thread is deleted, instead of leaving it to the idle timeout.
+func (s *Service) CloseThread(threadID int64) error {
+	return s.translator.CloseThread(strconv.FormatInt(threadID, 10))
+}
+
+// Close shuts down every claude session the service owns, e.g. when a token
+// change replaces it with a freshly wired one.
+func (s *Service) Close() error {
+	return s.translator.Close()
 }
 
 // emit publishes one progress event, dropping it if nobody keeps up.
@@ -436,7 +455,27 @@ func (s *Service) translateThread(
 		s.emit(Progress{ThreadID: thread.ID, Stage: StageTranslating, Done: done, Total: pending})
 	}
 
+	if err := s.persistSession(ctx, thread); err != nil {
+		return nil, err
+	}
+
 	return msgs, nil
+}
+
+// persistSession stores the thread's claude session id once the translator
+// has learned it, so a restarted app, or a fresh session after an idle
+// reap, can pick the same conversation back up via --resume.
+func (s *Service) persistSession(ctx context.Context, thread store.Thread) error {
+	id, err := s.translator.SessionID(ctx, threadKey(thread))
+	if err != nil {
+		return err
+	}
+
+	if id == "" || id == thread.ClaudeSessionID {
+		return nil
+	}
+
+	return s.store.SetThreadSession(ctx, thread.ID, id)
 }
 
 // saveTranslations stores the translations of one request, skipping ids the
@@ -480,6 +519,10 @@ func (s *Service) updateSummary(
 
 	text, err := s.translator.Summarize(ctx, threadKey(thread), msgs)
 	if err != nil {
+		return err
+	}
+
+	if err := s.persistSession(ctx, thread); err != nil {
 		return err
 	}
 

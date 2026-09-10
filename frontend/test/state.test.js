@@ -25,6 +25,11 @@ test('архивные треды скрыты, пока их не попрос�
     assert.deepEqual(visibleThreads(threads, true).map((t) => t.id), [3, 2, 1]);
 });
 
+test('отсутствие списка тредов не роняет фильтр', () => {
+    assert.deepEqual(visibleThreads(null, false), []);
+    assert.deepEqual(visibleThreads(undefined, true), []);
+});
+
 test('исходный список не мутируется сортировкой', () => {
     const copy = threads.slice();
 

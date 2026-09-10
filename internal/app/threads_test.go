@@ -273,8 +273,16 @@ func TestDeleteThread(t *testing.T) {
 		t.Errorf("deleted = %v", st.deleted)
 	}
 
+	if len(sy.closedThreads) != 1 || sy.closedThreads[0] != 1 {
+		t.Errorf("closedThreads = %v, want the claude session of the deleted thread closed", sy.closedThreads)
+	}
+
 	if err := a.DeleteThread(1); err == nil {
 		t.Error("deleting a gone thread reported success")
+	}
+
+	if len(sy.closedThreads) != 1 {
+		t.Errorf("closedThreads = %v, want no extra close after a failed delete", sy.closedThreads)
 	}
 }
 
@@ -576,5 +584,56 @@ func TestProgressEventsReachTheFrontend(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("progress event never reached the frontend")
+	}
+}
+
+// TestRewireClosesPreviousSyncerAndKeepsPumping exercises what happens when
+// the token is checked (or saved) a second time after the app already wired
+// a working sync service: this replaces a.sync while pumpProgress may be
+// parked reading the old service's Progress channel.
+func TestRewireClosesPreviousSyncerAndKeepsPumping(t *testing.T) {
+	st := newFakeStorage()
+	sy1, sy2 := newFakeSyncer(), newFakeSyncer()
+
+	events := make(chan syncsvc.Progress, 4)
+
+	builds := []Syncer{sy1, sy2}
+
+	a := New(
+		WithTokenStore(&fakeStore{token: "xoxp-good"}),
+		WithTokenChecker(okChecker(nil)),
+		WithStorage(st),
+		WithEmitter(func(_ context.Context, event string, data ...interface{}) {
+			if event == EventProgress {
+				events <- data[0].(syncsvc.Progress)
+			}
+		}),
+		withBuilder(func(_ config.Config, _ Storage, _ string) Syncer {
+			svc := builds[0]
+			builds = builds[1:]
+
+			return svc
+		}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	a.startup(ctx)
+	a.checkToken(ctx)
+
+	if sy1.closeCalls != 1 {
+		t.Fatalf("previous syncer Close calls = %d, want 1", sy1.closeCalls)
+	}
+
+	sy2.progress <- syncsvc.Progress{ThreadID: 7, Stage: syncsvc.StageDone}
+
+	select {
+	case got := <-events:
+		if got.ThreadID != 7 {
+			t.Errorf("progress = %+v, want it forwarded from the new syncer", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("progress from the newly wired syncer never reached the frontend")
 	}
 }

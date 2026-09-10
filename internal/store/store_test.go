@@ -499,11 +499,12 @@ func TestMutatorsOnMissingThread(t *testing.T) {
 	ctx := context.Background()
 
 	tests := map[string]func() error{
-		"archive": func() error { return s.SetThreadArchived(ctx, 404, true) },
-		"title":   func() error { return s.SetThreadTitle(ctx, 404, "x") },
-		"fetched": func() error { return s.SetThreadFetched(ctx, 404, time.Now()) },
-		"session": func() error { return s.SetThreadSession(ctx, 404, "s") },
-		"delete":  func() error { return s.DeleteThread(ctx, 404) },
+		"archive":      func() error { return s.SetThreadArchived(ctx, 404, true) },
+		"title":        func() error { return s.SetThreadTitle(ctx, 404, "x") },
+		"fetched":      func() error { return s.SetThreadFetched(ctx, 404, time.Now()) },
+		"session":      func() error { return s.SetThreadSession(ctx, 404, "s") },
+		"needsRefresh": func() error { return s.SetThreadNeedsRefresh(ctx, 404, true) },
+		"delete":       func() error { return s.DeleteThread(ctx, 404) },
 	}
 
 	for name, call := range tests {

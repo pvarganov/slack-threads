@@ -43,6 +43,10 @@ func (s *Service) DraftReply(ctx context.Context, threadID int64, ru string) (st
 		return store.Draft{}, err
 	}
 
+	if err := s.persistSession(ctx, thread); err != nil {
+		return store.Draft{}, err
+	}
+
 	draft := store.Draft{ThreadID: threadID, TextRU: ru, TextEN: en, BackRU: backRU}
 	if err := s.store.SaveDraft(ctx, draft); err != nil {
 		return store.Draft{}, err

@@ -49,6 +49,9 @@ type App struct {
 	// pumping is true once the progress forwarder is running, so
 	// re-wiring after a token change does not start a second one.
 	pumping bool
+	// rewired signals pumpProgress that a.sync was just replaced, so it
+	// stops waiting on the old service's Progress channel and rereads it.
+	rewired chan struct{}
 }
 
 // Option customises an App; production uses the defaults, tests replace
@@ -97,6 +100,7 @@ func New(opts ...Option) *App {
 		build:   buildService,
 		emit:    wailsruntime.EventsEmit,
 		locks:   newKeyLock(),
+		rewired: make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
@@ -136,6 +140,7 @@ func (a *App) wire(ctx context.Context, token string) {
 	}
 
 	a.mu.Lock()
+	previous := a.sync
 	a.sync = svc
 	start := !a.pumping
 	a.pumping = true
@@ -143,12 +148,26 @@ func (a *App) wire(ctx context.Context, token string) {
 
 	if start {
 		go a.pumpProgress(ctx)
+	} else {
+		// pumpProgress may be parked reading the old service's Progress
+		// channel; wake it so it picks up the one just installed.
+		select {
+		case a.rewired <- struct{}{}:
+		default:
+		}
+	}
+
+	if previous != nil {
+		// Best-effort: the new service is already in place, so a claude
+		// process that failed to shut down is not worth failing over.
+		_ = previous.Close()
 	}
 }
 
 // pumpProgress forwards sync progress to the frontend until the app
 // shuts down. Re-wiring after a token change replaces the service, so the
-// channel is read through the current one on every iteration.
+// channel is read through the current one on every iteration; rewired
+// breaks it out of a wait on a service that was just replaced.
 func (a *App) pumpProgress(ctx context.Context) {
 	for {
 		a.mu.Lock()
@@ -162,6 +181,8 @@ func (a *App) pumpProgress(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-a.rewired:
+			continue
 		case p, ok := <-svc.Progress():
 			if !ok {
 				return

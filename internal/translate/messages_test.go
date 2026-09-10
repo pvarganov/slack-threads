@@ -10,9 +10,10 @@ import (
 
 // fakeTurn records the prompts it receives and answers from a script.
 type fakeTurn struct {
-	answers []string
-	errs    []error
-	prompts []string
+	answers   []string
+	errs      []error
+	prompts   []string
+	sessionID string
 }
 
 func (f *fakeTurn) Send(_ context.Context, prompt string) (string, error) {
@@ -31,11 +32,15 @@ func (f *fakeTurn) Send(_ context.Context, prompt string) (string, error) {
 	return f.answers[i], nil
 }
 
+func (f *fakeTurn) SessionID() string { return f.sessionID }
+
 // fakeSessions hands out one turn and remembers what thread was asked for.
 type fakeSessions struct {
-	turn      Turn
-	err       error
-	threadIDs []string
+	turn        Turn
+	err         error
+	threadIDs   []string
+	closed      []string
+	closeThrErr error
 }
 
 func (f *fakeSessions) Session(_ context.Context, threadID string) (Turn, error) {
@@ -47,6 +52,14 @@ func (f *fakeSessions) Session(_ context.Context, threadID string) (Turn, error)
 
 	return f.turn, nil
 }
+
+func (f *fakeSessions) CloseThread(threadID string) error {
+	f.closed = append(f.closed, threadID)
+
+	return f.closeThrErr
+}
+
+func (f *fakeSessions) Close() error { return nil }
 
 // answerFor builds the JSON answer claude is expected to produce.
 func answerFor(pairs ...string) string {

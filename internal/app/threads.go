@@ -19,6 +19,12 @@ type Syncer interface {
 	GetDraft(ctx context.Context, threadID int64) (store.Draft, error)
 	SendReply(ctx context.Context, threadID int64, en string) (syncsvc.Sent, error)
 	Progress() <-chan syncsvc.Progress
+	// CloseThread shuts down the claude session of one thread, e.g. when
+	// the thread is deleted.
+	CloseThread(threadID int64) error
+	// Close shuts down every claude session, e.g. when a token change
+	// replaces the service with a freshly wired one.
+	Close() error
 }
 
 // Storage is the read side the bindings need on top of the sync service,
@@ -159,7 +165,18 @@ func (a *App) DeleteThread(id int64) error {
 	}
 	defer a.locks.release(key)
 
-	return userError(a.store.DeleteThread(a.context(), id))
+	if err := a.store.DeleteThread(a.context(), id); err != nil {
+		return userError(err)
+	}
+
+	if a.sync != nil {
+		// Best-effort cleanup: the thread is already gone from the store,
+		// so a claude process that failed to shut down would only be
+		// reaped later by the idle timeout, not surfaced as a failure.
+		_ = a.sync.CloseThread(id)
+	}
+
+	return nil
 }
 
 // ArchiveThread stops (or resumes) refreshing a thread while keeping

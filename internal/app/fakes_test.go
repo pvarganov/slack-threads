@@ -38,6 +38,9 @@ type fakeSyncer struct {
 	sentEN  string
 
 	progress chan syncsvc.Progress
+
+	closedThreads []int64
+	closeCalls    int
 }
 
 func newFakeSyncer() *fakeSyncer {
@@ -123,6 +126,24 @@ func (f *fakeSyncer) SendReply(_ context.Context, threadID int64, en string) (sy
 }
 
 func (f *fakeSyncer) Progress() <-chan syncsvc.Progress { return f.progress }
+
+func (f *fakeSyncer) CloseThread(threadID int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.closedThreads = append(f.closedThreads, threadID)
+
+	return nil
+}
+
+func (f *fakeSyncer) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.closeCalls++
+
+	return nil
+}
 
 func (f *fakeSyncer) refreshedIDs() []int64 {
 	f.mu.Lock()

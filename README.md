@@ -28,7 +28,8 @@
 - `claude` CLI 2.1.267 или совместимый — переводчик запускает его подпроцессом
   и работает по подписке, отдельный API-ключ не нужен
 - Wails CLI для сборки: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
-- Node.js — для юнит-тестов фронтенда
+- Node.js — для юнит-тестов фронтенда и для сборки: `wails build` сам
+  прогоняет `npm install`/`npm run build`, чтобы собрать бандл
 
 SQLite подключён через `modernc.org/sqlite` (чистый Go), cgo не требуется.
 

@@ -179,9 +179,39 @@ func (c ChainStore) Token() (string, error) {
 	return "", ErrNoToken
 }
 
-// SetToken writes into the first store that accepts writes.
+// SetToken writes into the first store that accepts writes. When an
+// earlier store in the read order already holds a token, writing to a
+// later one would be silently ineffective — Token always prefers the
+// earlier store — so that case is reported as ErrReadOnlyStore too,
+// instead of reporting success for a write nothing will ever read back.
 func (c ChainStore) SetToken(token string) error {
-	return c.write(func(s TokenStore) error { return s.SetToken(token) })
+	for i, s := range c.Stores {
+		if hasToken(c.Stores[:i]) {
+			return ErrReadOnlyStore
+		}
+
+		err := s.SetToken(token)
+		if err == nil {
+			return nil
+		}
+
+		if !errors.Is(err, ErrReadOnlyStore) {
+			return err
+		}
+	}
+
+	return ErrReadOnlyStore
+}
+
+// hasToken reports whether any of stores currently holds a token.
+func hasToken(stores []TokenStore) bool {
+	for _, s := range stores {
+		if _, err := s.Token(); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // DeleteToken removes the token from the first writable store.

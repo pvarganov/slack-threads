@@ -67,12 +67,20 @@ type translateResponse struct {
 // Turn is one request/response exchange with a claude session.
 type Turn interface {
 	Send(ctx context.Context, prompt string) (string, error)
+	// SessionID is the claude session id, learned from the first turn, so
+	// it can be persisted and reused via --resume.
+	SessionID() string
 }
 
 // Sessions hands out the long-lived session of a thread. *Manager is
 // adapted to it by ManagerSessions.
 type Sessions interface {
 	Session(ctx context.Context, threadID string) (Turn, error)
+	// CloseThread shuts a thread's session down, e.g. when the thread is
+	// deleted.
+	CloseThread(threadID string) error
+	// Close shuts every session down.
+	Close() error
 }
 
 // ManagerSessions adapts a Manager to Sessions. Resume, when set, returns
@@ -91,6 +99,16 @@ func (a ManagerSessions) Session(ctx context.Context, threadID string) (Turn, er
 	}
 
 	return a.Manager.Session(ctx, threadID, resumeID)
+}
+
+// CloseThread implements Sessions.
+func (a ManagerSessions) CloseThread(threadID string) error {
+	return a.Manager.CloseThread(threadID)
+}
+
+// Close implements Sessions.
+func (a ManagerSessions) Close() error {
+	return a.Manager.Close()
 }
 
 // Translator turns Slack messages into Russian through the per-thread
@@ -140,6 +158,29 @@ func (t *Translator) TranslateMessages(ctx context.Context, threadID string, msg
 	}
 
 	return out, nil
+}
+
+// SessionID returns the thread's claude session id, once a turn has run and
+// learned it, so the caller can persist it for --resume across restarts.
+func (t *Translator) SessionID(ctx context.Context, threadID string) (string, error) {
+	session, err := t.sessions.Session(ctx, threadID)
+	if err != nil {
+		return "", err
+	}
+
+	return session.SessionID(), nil
+}
+
+// CloseThread shuts a thread's claude session down, e.g. when the thread is
+// deleted.
+func (t *Translator) CloseThread(threadID string) error {
+	return t.sessions.CloseThread(threadID)
+}
+
+// Close shuts every session down, e.g. when the translator is being
+// replaced by a freshly wired one.
+func (t *Translator) Close() error {
+	return t.sessions.Close()
 }
 
 func (t *Translator) budget() int {
