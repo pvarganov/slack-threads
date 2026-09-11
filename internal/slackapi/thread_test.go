@@ -189,3 +189,47 @@ func TestFetchThreadRequestsConfiguredPageLimit(t *testing.T) {
 // clientIsAClient keeps HTTPClient assignable to the Client interface the
 // rest of the app depends on.
 var _ slackapi.Client = (*slackapi.HTTPClient)(nil)
+
+// An app posting under its own user carries bot_profile: Slack labels the
+// message with that name, not with the bot user's profile.
+func TestFetchThreadReadsBotProfileName(t *testing.T) {
+	t.Parallel()
+
+	const fixture = `{"ok":true,"messages":[
+      {"ts":"1.0","user":"U0APP","bot_id":"B0APP","bot_profile":{"name":"Maia (TAM)"},"text":"hi"}
+    ]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(fixture))
+	}))
+	defer srv.Close()
+
+	client, _ := newClient(t, srv)
+
+	msgs, err := client.FetchThread(context.Background(), "C0123", "1.0")
+	if err != nil {
+		t.Fatalf("FetchThread: %v", err)
+	}
+
+	if msgs[0].BotName != "Maia (TAM)" {
+		t.Errorf("BotName = %q, want the bot_profile name", msgs[0].BotName)
+	}
+
+	if msgs[0].Label() != "Maia (TAM)" {
+		t.Errorf("Label = %q, want the bot_profile name", msgs[0].Label())
+	}
+}
+
+func TestMessageLabelPrefersUsername(t *testing.T) {
+	t.Parallel()
+
+	m := slackapi.Message{Username: "Maia (TAM)", BotName: "Pylon"}
+
+	if m.Label() != "Maia (TAM)" {
+		t.Errorf("Label = %q, want the username the bot posted under", m.Label())
+	}
+
+	if (slackapi.Message{}).Label() != "" {
+		t.Error("an ordinary message must carry no label")
+	}
+}

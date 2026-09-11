@@ -34,6 +34,10 @@ type Message struct {
 	BotID string
 	// Username is the display name a bot posted under, when it set one.
 	Username string
+	// BotName is the name of the app the message came from (bot_profile).
+	// Slack labels such a message with it, even when the author also has
+	// a user profile, so it beats the cached profile name.
+	BotName string
 	// Text is the raw mrkdwn body.
 	Text string
 	// Subtype distinguishes joins, channel topic changes, file shares and
@@ -45,6 +49,18 @@ type Message struct {
 	Reactions []Reaction
 	// Raw is the original JSON object Slack returned.
 	Raw json.RawMessage
+}
+
+// Label is the name Slack itself puts on the message, when the payload
+// carries one: the username a bot posted under, otherwise the app name
+// from bot_profile. Empty for an ordinary message, whose author is named
+// by their profile.
+func (m Message) Label() string {
+	if m.Username != "" {
+		return m.Username
+	}
+
+	return m.BotName
 }
 
 // Author returns the identifier to attribute the message to: the user ID for
@@ -59,14 +75,17 @@ func (m Message) Author() string {
 
 // rawMessage mirrors the parts of the Slack message payload the app reads.
 type rawMessage struct {
-	TS       string `json:"ts"`
-	ThreadTS string `json:"thread_ts"`
-	User     string `json:"user"`
-	BotID    string `json:"bot_id"`
-	Username string `json:"username"`
-	Text     string `json:"text"`
-	Subtype  string `json:"subtype"`
-	Edited   *struct {
+	TS         string `json:"ts"`
+	ThreadTS   string `json:"thread_ts"`
+	User       string `json:"user"`
+	BotID      string `json:"bot_id"`
+	Username   string `json:"username"`
+	Text       string `json:"text"`
+	BotProfile *struct {
+		Name string `json:"name"`
+	} `json:"bot_profile"`
+	Subtype string `json:"subtype"`
+	Edited  *struct {
 		TS   string `json:"ts"`
 		User string `json:"user"`
 	} `json:"edited"`
@@ -148,6 +167,10 @@ func decodeMessage(raw json.RawMessage) (Message, error) {
 		Text:     r.Text,
 		Subtype:  r.Subtype,
 		Raw:      raw,
+	}
+
+	if r.BotProfile != nil {
+		msg.BotName = r.BotProfile.Name
 	}
 
 	if r.Edited != nil {
