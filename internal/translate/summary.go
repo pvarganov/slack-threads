@@ -19,7 +19,22 @@ const (
 // summaryResponse is the JSON the model is asked to answer with.
 type summaryResponse struct {
 	Summary string `json:"summary"`
+	Title   string `json:"title"`
 }
+
+// Summary is what one summarising turn produces: the «Суть» block and the
+// thread's subject line for the list.
+type Summary struct {
+	// TextRU is the «Суть» block, 2-5 sentences.
+	TextRU string
+	// Title is the subject of the thread, the way an email subject names
+	// a conversation: a few words, no trailing period.
+	Title string
+}
+
+// titleLimit caps the subject line. The model is asked for a few words;
+// this is the guard against an answer that ignores the instruction.
+const titleLimit = 60
 
 // summaryMessage is the on-the-wire form of a translated message.
 type summaryMessage struct {
@@ -29,22 +44,23 @@ type summaryMessage struct {
 }
 
 // Summarize builds the "Суть" block of a thread from its translated
-// messages: what the thread is about and what is expected from the user.
-// A thread of one or two short messages gets no summary — the empty string
-// is returned without touching the claude session.
-func (t *Translator) Summarize(ctx context.Context, threadID string, translated []Message) (string, error) {
+// messages — what the thread is about and what is expected from the user —
+// and the subject line the thread list is named by. Both come out of one
+// turn: the model has just read the thread anyway. A thread of one or two
+// short messages gets neither, and the claude session is not touched.
+func (t *Translator) Summarize(ctx context.Context, threadID string, translated []Message) (Summary, error) {
 	if !NeedsSummary(translated) {
-		return "", nil
+		return Summary{}, nil
 	}
 
 	session, err := t.sessions.Session(ctx, threadID)
 	if err != nil {
-		return "", err
+		return Summary{}, err
 	}
 
 	raw, err := session.Send(ctx, buildSummaryPrompt(translated))
 	if err != nil {
-		return "", err
+		return Summary{}, err
 	}
 
 	return parseSummary(raw)
@@ -122,8 +138,12 @@ func buildSummaryPrompt(msgs []Message) string {
 	b.WriteString("Напиши по-русски, 2–5 предложений, без markdown-заголовков и без списка сообщений:\n")
 	b.WriteString("- о чём тред и к чему обсуждение пришло;\n")
 	b.WriteString("- что ждут от меня: вопрос, решение, действие — или прямо скажи, что от меня ничего не ждут.\n")
-	b.WriteString("Не пересказывай каждое сообщение и ничего не выдумывай: только то, что есть в THREAD.\n")
-	b.WriteString(`Ответь одним JSON-объектом вида {"summary":"<текст>"}`)
+	b.WriteString("Не пересказывай каждое сообщение и ничего не выдумывай: только то, что есть в THREAD.\n\n")
+	b.WriteString("Ещё придумай заголовок треда — как тема письма: по-русски, 2–6 слов, ")
+	b.WriteString("именительный падеж, без точки в конце и без кавычек. Он должен называть предмет ")
+	b.WriteString("обсуждения, а не пересказывать его: «Ошибка CVV в Ecommpay», «Оплата картой падает ")
+	b.WriteString("на 3-D Secure». Сохраняй имена систем, продуктов и ошибок как есть.\n")
+	b.WriteString(`Ответь одним JSON-объектом вида {"summary":"<текст>","title":"<заголовок>"}`)
 	b.WriteString(".\n\nTHREAD:\n")
 	b.WriteString(encodeSummary(msgs))
 	b.WriteString("\n")
@@ -143,15 +163,15 @@ func encodeSummary(msgs []Message) string {
 
 // parseSummary decodes the answer, stripping any prose or code fence the
 // model wrapped the JSON in.
-func parseSummary(raw string) (string, error) {
+func parseSummary(raw string) (Summary, error) {
 	body, err := extractJSONObject(raw)
 	if err != nil {
-		return "", err
+		return Summary{}, err
 	}
 
 	var resp summaryResponse
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
-		return "", &ResponseError{
+		return Summary{}, &ResponseError{
 			Reason: fmt.Sprintf("decoding answer: %v", err),
 			Raw:    truncate(raw, 500),
 		}
@@ -159,8 +179,34 @@ func parseSummary(raw string) (string, error) {
 
 	text := strings.TrimSpace(resp.Summary)
 	if text == "" {
-		return "", &ResponseError{Reason: "answer carries no summary", Raw: truncate(raw, 500)}
+		return Summary{}, &ResponseError{Reason: "answer carries no summary", Raw: truncate(raw, 500)}
 	}
 
-	return text, nil
+	// A missing title is not worth failing the turn over: the list falls
+	// back to the first line of the thread.
+	return Summary{TextRU: text, Title: cleanTitle(resp.Title)}, nil
+}
+
+// cleanTitle strips the decorations a subject line must not carry and
+// caps its length.
+func cleanTitle(title string) string {
+	// Точка может стоять и внутри кавычек, и снаружи, поэтому чистим
+	// в цикле, пока строка меняется.
+	for {
+		trimmed := strings.TrimRight(strings.Trim(strings.TrimSpace(title), "\"«»'`"), ".")
+		if trimmed == title {
+			break
+		}
+
+		title = trimmed
+	}
+
+	title = strings.Join(strings.Fields(title), " ")
+
+	runes := []rune(title)
+	if len(runes) > titleLimit {
+		title = strings.TrimSpace(string(runes[:titleLimit])) + "…"
+	}
+
+	return title
 }

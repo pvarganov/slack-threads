@@ -10,7 +10,12 @@ import (
 
 // summaryAnswer builds the JSON answer claude is expected to produce.
 func summaryAnswer(text string) string {
-	buf, err := json.Marshal(summaryResponse{Summary: text})
+	return summaryAnswerWithTitle(text, "Падение деплоя")
+}
+
+// summaryAnswerWithTitle is summaryAnswer with an explicit subject line.
+func summaryAnswerWithTitle(text, title string) string {
+	buf, err := json.Marshal(summaryResponse{Summary: text, Title: title})
 	if err != nil {
 		panic(err)
 	}
@@ -48,8 +53,12 @@ func TestSummaryPromptCarriesTranslationsAndFormat(t *testing.T) {
 		t.Fatalf("Summarize: %v", err)
 	}
 
-	if got != "Обсуждают падение деплоя. От меня ждут решения." {
-		t.Fatalf("summary = %q", got)
+	if got.TextRU != "Обсуждают падение деплоя. От меня ждут решения." {
+		t.Fatalf("summary = %q", got.TextRU)
+	}
+
+	if got.Title != "Падение деплоя" {
+		t.Fatalf("title = %q, want the subject from the same answer", got.Title)
 	}
 
 	if len(turn.prompts) != 1 {
@@ -59,7 +68,8 @@ func TestSummaryPromptCarriesTranslationsAndFormat(t *testing.T) {
 	prompt := turn.prompts[0]
 
 	for _, want := range []string{
-		"Суть", "что ждут от меня", `{"summary":"<текст>"}`, "THREAD:",
+		"Суть", "что ждут от меня", "как тема письма", "2–6 слов",
+		`{"summary":"<текст>","title":"<заголовок>"}`, "THREAD:",
 		"деплой встал", "откатывать?", "@pavel как считаешь", "Alice", "Bob", "3.3",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -111,15 +121,15 @@ func TestSummarizeSkipsShortThreads(t *testing.T) {
 			}
 
 			if tc.want {
-				if got == "" {
+				if got.TextRU == "" {
 					t.Fatal("summary is empty, want generated")
 				}
 
 				return
 			}
 
-			if got != "" {
-				t.Fatalf("summary = %q, want empty", got)
+			if got.TextRU != "" || got.Title != "" {
+				t.Fatalf("summary = %+v, want nothing", got)
 			}
 
 			if len(turn.prompts) != 0 {
@@ -181,8 +191,55 @@ func TestSummarizeAcceptsFencedJSON(t *testing.T) {
 		t.Fatalf("Summarize: %v", err)
 	}
 
-	if got != "Тред про раут заказа." {
-		t.Fatalf("summary = %q", got)
+	if got.TextRU != "Тред про раут заказа." {
+		t.Fatalf("summary = %q", got.TextRU)
+	}
+}
+
+// Заголовок приходит от модели в свободной форме: кавычки, точка в конце
+// и лишние пробелы встречаются регулярно, а длину надо ограничить.
+func TestSummarizeCleansTheTitle(t *testing.T) {
+	tests := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		{name: "quotes and period", title: `  «Ошибка CVV в Ecommpay».  `, want: "Ошибка CVV в Ecommpay"},
+		{name: "inner spacing", title: "Ошибка   CVV\nв Ecommpay", want: "Ошибка CVV в Ecommpay"},
+		{name: "empty", title: "   ", want: ""},
+		{name: "too long", title: strings.Repeat("я", 100), want: strings.Repeat("я", 60) + "…"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sessions := &fakeSessions{
+				turn: &fakeTurn{answers: []string{summaryAnswerWithTitle("суть треда", tc.title)}},
+			}
+
+			got, err := NewTranslator(sessions).Summarize(context.Background(), "t", longThread(3))
+			if err != nil {
+				t.Fatalf("Summarize: %v", err)
+			}
+
+			if got.Title != tc.want {
+				t.Errorf("title = %q, want %q", got.Title, tc.want)
+			}
+		})
+	}
+}
+
+// Без заголовка ход не должен падать: список переживёт отсутствие темы,
+// а «Суть» — нет.
+func TestSummarizeSurvivesAMissingTitle(t *testing.T) {
+	sessions := &fakeSessions{turn: &fakeTurn{answers: []string{`{"summary":"суть треда"}`}}}
+
+	got, err := NewTranslator(sessions).Summarize(context.Background(), "t", longThread(3))
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+
+	if got.TextRU != "суть треда" || got.Title != "" {
+		t.Errorf("summary = %+v, want the text with no title", got)
 	}
 }
 

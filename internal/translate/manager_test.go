@@ -25,6 +25,7 @@ func TestBuildArgs(t *testing.T) {
 				"--output-format", "stream-json",
 				"--verbose",
 				"--strict-mcp-config",
+				"--setting-sources", "",
 				"--tools", "",
 				"--permission-mode", "dontAsk",
 				"--permission-prompts", "none",
@@ -83,6 +84,16 @@ func TestBuildArgsDefaultArgsAreComplete(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("args %q: missing %q", got, want)
 		}
+	}
+}
+
+// The user's own settings must stay out of the translator: their hooks
+// would rewrite the translation and add their timeout to every message.
+func TestBuildArgsDropsUserSettings(t *testing.T) {
+	got := buildArgs(Config{}, "")
+
+	if !hasPair(got, "--setting-sources", "") {
+		t.Errorf("args %v: missing empty --setting-sources", got)
 	}
 }
 

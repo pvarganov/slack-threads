@@ -37,6 +37,12 @@ type Config struct {
 // tools at all: --tools "" disables the built-ins and --strict-mcp-config
 // keeps the user's MCP servers out (both are required, see
 // docs/claude-cli-contract.md).
+//
+// --setting-sources "" keeps the user's own settings.json out of the
+// translator. Without it the person's hooks run inside every turn: a
+// MessageDisplay hook rewrites the translation, and its timeout is added
+// to every one of the thread's messages. Authentication is unaffected --
+// it does not come from the settings files.
 func buildArgs(cfg Config, resumeID string) []string {
 	model := cfg.Model
 	if model == "" {
@@ -49,6 +55,7 @@ func buildArgs(cfg Config, resumeID string) []string {
 		"--output-format", "stream-json",
 		"--verbose",
 		"--strict-mcp-config",
+		"--setting-sources", "",
 		"--tools", "",
 		"--permission-mode", "dontAsk",
 		"--permission-prompts", "none",

@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 // Process is one running claude CLI process: JSON request lines go into
@@ -51,7 +54,7 @@ func (r ExecRunner) Start(ctx context.Context, args []string) (Process, error) {
 		bin = DefaultBinary
 	}
 
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(ctx, resolveBinary(bin), args...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.Env
 
@@ -107,4 +110,56 @@ func (p *execProcess) Kill() error {
 	}
 
 	return p.cmd.Process.Kill()
+}
+
+// installDirs are the usual homes of the claude CLI, relative to the home
+// directory when they start with "~".
+var installDirs = []string{
+	"~/.local/bin",
+	"~/.claude/local",
+	"/opt/homebrew/bin",
+	"/usr/local/bin",
+}
+
+// resolveBinary turns a bare executable name into a path. PATH is tried
+// first, then the usual install locations: a bundled app started from
+// Finder inherits launchd's PATH (/usr/bin:/bin:/usr/sbin:/sbin), which
+// never contains claude, so without this the app only works when it is
+// launched from a shell. An unresolvable name is returned as it is, so
+// the caller still reports the familiar "not found" error.
+func resolveBinary(bin string) string {
+	if strings.ContainsRune(bin, filepath.Separator) {
+		return bin
+	}
+
+	if path, err := exec.LookPath(bin); err == nil {
+		return path
+	}
+
+	home, err := os.UserHomeDir()
+
+	for _, dir := range installDirs {
+		if strings.HasPrefix(dir, "~/") {
+			if err != nil {
+				continue
+			}
+
+			dir = filepath.Join(home, dir[2:])
+		}
+
+		candidate := filepath.Join(dir, bin)
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+
+	return bin
+}
+
+// isExecutableFile reports whether the path is a regular file the current
+// user may run.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }

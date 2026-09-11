@@ -161,3 +161,39 @@ func TestManagerReportsMissingBinary(t *testing.T) {
 		t.Errorf("Session err = %v, want ErrBinaryNotFound", err)
 	}
 }
+
+func TestResolveBinaryFindsInstallDirWithoutPath(t *testing.T) {
+	// A GUI app inherits launchd's PATH, where claude never lives.
+	home := t.TempDir()
+	bin := filepath.Join(home, ".local", "bin")
+
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	claude := filepath.Join(bin, "claude")
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/nonexistent")
+
+	if got := resolveBinary("claude"); got != claude {
+		t.Errorf("resolveBinary = %q, want %q", got, claude)
+	}
+}
+
+func TestResolveBinaryKeepsExplicitAndUnknown(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", "/nonexistent")
+
+	if got := resolveBinary("/opt/claude"); got != "/opt/claude" {
+		t.Errorf("path argument changed: %q", got)
+	}
+
+	// Unresolvable names are passed through so Start reports ErrBinaryNotFound.
+	if got := resolveBinary("claude-not-installed"); got != "claude-not-installed" {
+		t.Errorf("unknown binary changed: %q", got)
+	}
+}
