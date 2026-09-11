@@ -1,6 +1,6 @@
 GO       ?= go
 # VERSION is stamped into the binary and names the release archive.
-VERSION  ?= 0.1.0
+VERSION  ?= 0.1.1
 MODULE   := github.com/pavelvarganov/slack-threads
 WAILS    ?= $(shell go env GOPATH)/bin/wails
 GOLANGCI ?= $(shell go env GOPATH)/bin/golangci-lint
