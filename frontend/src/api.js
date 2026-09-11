@@ -31,6 +31,15 @@ export const api = {
     sendReply: (id, en) => call('SendReply', id, en),
 };
 
+/**
+ * Открыть ссылку в системном браузере. Внутри WKWebView обычная навигация
+ * увела бы само приложение на страницу Slack, а target="_blank" там просто
+ * не работает: окно должен открывать рантайм Wails.
+ */
+export function openExternal(url) {
+    globalThis.runtime?.BrowserOpenURL?.(url);
+}
+
 /** Подписка на события прогресса синхронизации. */
 export function onProgress(handler) {
     globalThis.runtime?.EventsOn?.('sync:progress', handler);

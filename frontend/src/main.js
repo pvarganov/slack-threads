@@ -1,9 +1,10 @@
 import './style.css';
 import './app.css';
 
-import {api, errorText, onProgress} from './api.js';
+import {api, errorText, onProgress, openExternal} from './api.js';
 import {progressText} from './format.js';
 import {
+    canSend,
     draftFromView,
     emptyDraft,
     initialState,
@@ -29,6 +30,9 @@ function render() {
     root.innerHTML = renderApp(state);
 
     if (!field) {
+        // Открытый диалог сразу готов к вводу: печатать можно, не целясь мышью.
+        root.querySelector('.dialog [data-field]')?.focus();
+
         return;
     }
 
@@ -77,13 +81,38 @@ async function openThread(id) {
     state.draft = draftFromView(state.view.draft);
 }
 
+/** Готов ли черновик к отправке — та же проверка, что блокирует кнопку. */
+function canSendDraft() {
+    return canSend(state.draft);
+}
+
+/** Открыть вопрос «да/нет»; ответ выполнит confirmed[action]. */
+function askConfirm(text, okLabel, action, danger = false) {
+    state.confirm = {text, okLabel, action, danger};
+    render();
+}
+
 const actions = {
-    async 'add-thread'() {
-        const url = window.prompt('Ссылка на сообщение или тред в Slack');
+    'add-thread'() {
+        state.addPrompt = true;
+        state.addUrl = '';
+        render();
+    },
+
+    'close-add'() {
+        state.addPrompt = false;
+        render();
+    },
+
+    async 'submit-add'() {
+        const url = state.addUrl.trim();
 
         if (!url) {
             return;
         }
+
+        state.addPrompt = false;
+        state.addUrl = '';
 
         await run('Добавляю тред…', async () => {
             const view = await api.addThread(url);
@@ -137,42 +166,6 @@ const actions = {
         await run('Открываю тред…', () => openThread(id));
     },
 
-    async 'delete-thread'() {
-        if (!state.selectedId || !window.confirm('Удалить тред вместе с переводами? Это необратимо.')) {
-            return;
-        }
-
-        await run('Удаляю тред…', async () => {
-            await api.deleteThread(state.selectedId);
-            state.selectedId = 0;
-            state.view = null;
-            state.draft = emptyDraft(0);
-            await reloadThreads();
-            state.notice = 'Тред удалён.';
-        });
-    },
-
-    async 'archive-thread'() {
-        if (!state.view) {
-            return;
-        }
-
-        const archived = !state.view.thread.archived;
-        const question = archived
-            ? 'Убрать тред в архив? Он перестанет обновляться, перевод сохранится.'
-            : 'Вернуть тред из архива?';
-
-        if (!window.confirm(question)) {
-            return;
-        }
-
-        await run(archived ? 'Убираю в архив…' : 'Возвращаю из архива…', async () => {
-            await api.archiveThread(state.selectedId, archived);
-            await reloadThreads();
-            await openThread(state.selectedId);
-        });
-    },
-
     async 'translate-reply'() {
         if (!state.selectedId || !state.draft.textRu.trim()) {
             return;
@@ -185,17 +178,52 @@ const actions = {
         });
     },
 
-    async 'send-reply'() {
-        if (!state.selectedId || !window.confirm('Отправить ответ в тред?')) {
+    'delete-thread'() {
+        if (!state.selectedId) {
             return;
         }
 
-        await run('Отправляю ответ…', async () => {
-            await api.sendReply(state.selectedId, state.draft.textEn);
-            state.draft = emptyDraft(state.selectedId);
-            state.view = await api.getThread(state.selectedId);
-            state.notice = 'Ответ отправлен.';
-        });
+        askConfirm('Удалить тред вместе с переводами? Это необратимо.', 'Удалить', 'delete-thread', true);
+    },
+
+    async 'archive-thread'() {
+        if (!state.view) {
+            return;
+        }
+
+        const archived = !state.view.thread.archived;
+
+        askConfirm(
+            archived
+                ? 'Убрать тред в архив? Он перестанет обновляться, перевод сохранится.'
+                : 'Вернуть тред из архива?',
+            archived ? 'В архив' : 'Вернуть',
+            'archive-thread',
+        );
+    },
+
+    'send-reply'() {
+        if (!state.selectedId || !canSendDraft()) {
+            return;
+        }
+
+        askConfirm('Отправить ответ в тред?', 'Отправить', 'send-reply');
+    },
+
+    'confirm-cancel'() {
+        state.confirm = null;
+        render();
+    },
+
+    async 'confirm-ok'() {
+        const pending = state.confirm;
+
+        state.confirm = null;
+        render();
+
+        if (pending) {
+            await confirmed[pending.action]?.();
+        }
     },
 
     'open-token'() {
@@ -209,8 +237,7 @@ const actions = {
     },
 
     async 'save-token'() {
-        const input = root.querySelector('[data-field="token"]');
-        const token = input?.value?.trim();
+        const token = root.querySelector('[data-field="token"]')?.value?.trim();
 
         if (!token) {
             return;
@@ -230,7 +257,59 @@ const actions = {
     },
 };
 
+// Действия, выполняемые после подтверждения в диалоге.
+const confirmed = {
+    async 'delete-thread'() {
+        await run('Удаляю тред…', async () => {
+            await api.deleteThread(state.selectedId);
+            state.selectedId = 0;
+            state.view = null;
+            state.draft = emptyDraft(0);
+            await reloadThreads();
+            state.notice = 'Тред удалён.';
+        });
+    },
+
+    async 'archive-thread'() {
+        if (!state.view) {
+            return;
+        }
+
+        const archived = !state.view.thread.archived;
+
+        await run(archived ? 'Убираю в архив…' : 'Возвращаю из архива…', async () => {
+            await api.archiveThread(state.selectedId, archived);
+            await reloadThreads();
+            await openThread(state.selectedId);
+        });
+    },
+
+    async 'send-reply'() {
+        if (!state.selectedId) {
+            return;
+        }
+
+        await run('Отправляю ответ…', async () => {
+            await api.sendReply(state.selectedId, state.draft.textEn);
+            state.draft = emptyDraft(state.selectedId);
+            state.view = await api.getThread(state.selectedId);
+            state.notice = 'Ответ отправлен.';
+        });
+    },
+
+};
+
 root.addEventListener('click', (event) => {
+    // Ссылки в сообщениях уходят в браузер, а не в окно приложения.
+    const link = event.target.closest('a[href]');
+
+    if (link) {
+        event.preventDefault();
+        openExternal(link.href);
+
+        return;
+    }
+
     const element = event.target.closest('[data-action]');
 
     if (!element || element.disabled) {
@@ -269,6 +348,38 @@ root.addEventListener('input', (event) => {
 
     if (field === 'en') {
         state.draft = withEnglish(state.draft, event.target.value);
+    }
+
+    // Кнопка «Добавить» включается по мере ввода, поэтому здесь нужна перерисовка.
+    if (field === 'url') {
+        const wasEmpty = !state.addUrl.trim();
+
+        state.addUrl = event.target.value;
+
+        if (wasEmpty !== !state.addUrl.trim()) {
+            render();
+        }
+    }
+});
+
+// Enter в однострочных полях диалогов подтверждает, Escape закрывает.
+root.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.dataset?.field === 'url') {
+        void actions['submit-add']();
+    }
+
+    if (event.key === 'Enter' && event.target.dataset?.field === 'token') {
+        void actions['save-token']();
+    }
+
+    if (event.key === 'Escape') {
+        if (state.confirm) {
+            actions['confirm-cancel']();
+        } else if (state.addPrompt) {
+            actions['close-add']();
+        } else if (state.tokenPrompt) {
+            actions['close-token']();
+        }
     }
 });
 

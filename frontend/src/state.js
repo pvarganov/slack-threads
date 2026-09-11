@@ -8,6 +8,11 @@ export function initialState() {
         token: {ok: false, message: '', fixable: false},
         // tokenPrompt — открыт ли диалог ввода токена.
         tokenPrompt: false,
+        // addPrompt — открыт ли диалог добавления треда, addUrl — то, что в нём набрано.
+        addPrompt: false,
+        addUrl: '',
+        // confirm — открытый вопрос «да/нет»: {text, okLabel, action, danger}.
+        confirm: null,
         threads: [],
         showArchived: false,
         selectedId: 0,

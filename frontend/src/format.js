@@ -14,6 +14,28 @@ export function escapeHtml(text) {
     return String(text ?? '').replace(/[&<>"']/g, (ch) => ENTITIES[ch]);
 }
 
+/**
+ * Устойчивый оттенок автора: один и тот же человек всегда одного цвета,
+ * поэтому в длинном треде видно, кто говорит, ещё до чтения имени.
+ */
+export function authorHue(author) {
+    const name = String(author ?? '');
+    let hash = 0;
+
+    for (const ch of name) {
+        hash = (hash * 31 + ch.codePointAt(0)) % 360;
+    }
+
+    return hash;
+}
+
+/** Буква на кружке автора. */
+export function authorInitial(author) {
+    const name = String(author ?? '').trim();
+
+    return name ? [...name][0].toUpperCase() : '?';
+}
+
 /** Переносы строк внутри абзаца сохраняются: в Slack они значимы. */
 function withBreaks(html) {
     return html.replace(/\n/g, '<br/>');

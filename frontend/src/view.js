@@ -1,7 +1,7 @@
 // Разметка приложения. Функции возвращают HTML-строки и ничего не знают
 // о DOM и о бэкенде — так их можно проверять в node.
 
-import {escapeHtml, formatTime, renderBlocks, renderReactions} from './format.js';
+import {authorHue, authorInitial, escapeHtml, formatTime, renderBlocks, renderReactions} from './format.js';
 import {canSend, sendBlockedReason, visibleThreads} from './state.js';
 
 /** Весь экран целиком. */
@@ -14,6 +14,8 @@ export function renderApp(state) {
           ${renderMain(state)}
         </div>
         ${renderTokenDialog(state)}
+        ${renderAddDialog(state)}
+        ${renderConfirmDialog(state)}
       </div>
     `;
 }
@@ -102,7 +104,7 @@ function renderThreadRow(thread, selected) {
       <li class="${classes.join(' ')}" data-action="select-thread" data-id="${thread.id}">
         <div class="thread-title">${mark}${escapeHtml(title)}</div>
         <div class="thread-meta">
-          ${escapeHtml(thread.channelId)} · ${escapeHtml(formatTime(thread.lastFetchedAt || thread.addedAt))}
+          ${escapeHtml(formatTime(thread.lastFetchedAt || thread.addedAt))}
           ${thread.archived ? '· архив' : ''}
         </div>
       </li>
@@ -179,9 +181,12 @@ export function renderMessage(message, showOriginal) {
         ? `<div class="original"><div class="original-label">Оригинал</div>${original}</div>`
         : '';
 
+    // Оттенок автора живёт на карточке: его берут и кружок, и имя, и полоса слева.
     return `
-      <article class="message${message.deleted ? ' deleted' : ''}" data-id="${message.id}">
+      <article class="message${message.deleted ? ' deleted' : ''}" data-id="${message.id}"
+               style="--hue: ${authorHue(message.author)}">
         <div class="message-head">
+          <span class="avatar">${escapeHtml(authorInitial(message.author))}</span>
           <span class="author">${escapeHtml(message.author)}</span>
           <span class="time">${escapeHtml(formatTime(message.time))}</span>
           ${flags}
@@ -219,7 +224,53 @@ export function renderReply(state) {
     `;
 }
 
-/** Диалог ввода токена — единственное модальное окно в приложении. */
+/**
+ * Диалог добавления треда. Системный window.prompt в WKWebView не работает
+ * (Wails не реализует делегаты JS-диалогов), поэтому все диалоги — свои.
+ */
+export function renderAddDialog(state) {
+    if (!state.addPrompt) {
+        return '';
+    }
+
+    return `
+      <div class="overlay">
+        <div class="dialog">
+          <h3>Добавить тред</h3>
+          <p class="dialog-hint">Ссылка на сообщение или тред: в Slack меню сообщения → «Copy link».</p>
+          <input type="text" data-field="url" placeholder="https://…slack.com/archives/…" autocomplete="off"
+                 value="${escapeHtml(state.addUrl)}"/>
+          <div class="dialog-actions">
+            <button data-action="close-add" class="secondary">Отмена</button>
+            <button data-action="submit-add" class="primary" ${disabled(!state.addUrl.trim())}>Добавить</button>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+/** Вопрос «да/нет» вместо window.confirm. */
+export function renderConfirmDialog(state) {
+    if (!state.confirm) {
+        return '';
+    }
+
+    const {text, okLabel, danger} = state.confirm;
+
+    return `
+      <div class="overlay">
+        <div class="dialog">
+          <p class="dialog-question">${escapeHtml(text)}</p>
+          <div class="dialog-actions">
+            <button data-action="confirm-cancel" class="secondary">Отмена</button>
+            <button data-action="confirm-ok" class="${danger ? 'danger' : 'primary'}">${escapeHtml(okLabel)}</button>
+          </div>
+        </div>
+      </div>
+    `;
+}
+
+/** Диалог ввода токена. */
 export function renderTokenDialog(state) {
     if (!state.tokenPrompt) {
         return '';

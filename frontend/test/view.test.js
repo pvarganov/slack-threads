@@ -2,7 +2,15 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 import {draftFromView, emptyDraft, initialState, withRussian, withTranslation} from '../src/state.js';
-import {renderApp, renderMessage, renderReply, renderStatusBar, renderTokenDialog} from '../src/view.js';
+import {
+    renderAddDialog,
+    renderApp,
+    renderConfirmDialog,
+    renderMessage,
+    renderReply,
+    renderStatusBar,
+    renderTokenDialog,
+} from '../src/view.js';
 
 function stateWithThread(overrides = {}) {
     const view = {
@@ -141,4 +149,63 @@ test('пустой список тредов подсказывает, что д
 
     assert.match(html, /Пока ни одного треда/);
     assert.match(html, /Выберите тред слева/);
+});
+
+test('диалог добавления треда заменяет window.prompt', () => {
+    assert.equal(renderAddDialog(initialState()), '');
+
+    const empty = renderAddDialog({...initialState(), addPrompt: true});
+
+    assert.match(empty, /data-field="url"/);
+    assert.match(empty, /data-action="submit-add"[^>]*disabled/);
+
+    const filled = renderAddDialog({...initialState(), addPrompt: true, addUrl: 'https://x.slack.com/archives/C1/p1'});
+
+    assert.match(filled, /value="https:\/\/x\.slack\.com\/archives\/C1\/p1"/);
+    assert.doesNotMatch(filled, /data-action="submit-add"[^>]*disabled/);
+});
+
+test('вопрос «да/нет» заменяет window.confirm', () => {
+    assert.equal(renderConfirmDialog(initialState()), '');
+
+    const state = {
+        ...initialState(),
+        confirm: {text: 'Удалить тред?', okLabel: 'Удалить', action: 'delete-thread', danger: true},
+    };
+
+    const html = renderConfirmDialog(state);
+
+    assert.match(html, /Удалить тред\?/);
+    assert.match(html, /data-action="confirm-ok"[^>]*class="danger"[^>]*>\s*Удалить/);
+    assert.match(html, /data-action="confirm-cancel"/);
+});
+
+test('открытый диалог попадает в разметку экрана', () => {
+    assert.match(renderApp({...initialState(), addPrompt: true}), /data-action="submit-add"/);
+    assert.match(
+        renderApp({...initialState(), confirm: {text: 'Отправить?', okLabel: 'Отправить', action: 'send-reply'}}),
+        /data-action="confirm-ok"/,
+    );
+});
+
+test('каждое сообщение — отдельная карточка с подсвеченным автором', () => {
+    const html = renderMessage(
+        {id: 1, author: 'Ann Lee', time: '2026-09-10T10:00:00Z', text: 'hi', blocksRu: [], blocks: [], reactions: []},
+        false,
+    );
+
+    assert.match(html, /<article class="message"[^>]*style="--hue: \d+"/);
+    assert.match(html, /<span class="avatar">A<\/span>/);
+    assert.match(html, /<span class="author">Ann Lee<\/span>/);
+});
+
+test('строка списка — это тема треда', () => {
+    const html = renderApp({
+        ...initialState(),
+        token: {ok: true, user: 'pavel', team: 'Overgear'},
+        threads: [{id: 7, title: 'Ошибка CVV в Ecommpay', channelId: 'C1', addedAt: '2026-09-10T10:00:00Z'}],
+    });
+
+    assert.match(html, /Ошибка CVV в Ecommpay/);
+    assert.doesNotMatch(html, /thread-preview/);
 });

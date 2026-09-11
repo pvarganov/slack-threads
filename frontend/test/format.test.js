@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 
 import {
+    authorHue,
+    authorInitial,
     escapeHtml,
     formatTime,
     progressText,
@@ -69,4 +71,21 @@ test('прогресс переводится в человеческий тек
     assert.equal(progressText({stage: 'translating'}), 'Перевожу сообщения…');
     assert.equal(progressText({stage: 'summarizing'}), 'Собираю «Суть» треда…');
     assert.equal(progressText(null), '');
+});
+
+test('цвет автора устойчив и различает людей', () => {
+    assert.equal(authorHue('Иван Петров'), authorHue('Иван Петров'));
+    assert.notEqual(authorHue('Иван Петров'), authorHue('Ann Lee'));
+
+    const hue = authorHue('Ann Lee');
+
+    assert.ok(Number.isInteger(hue) && hue >= 0 && hue < 360, `оттенок вне круга: ${hue}`);
+    assert.ok(Number.isInteger(authorHue(undefined)));
+});
+
+test('буква на кружке автора', () => {
+    assert.equal(authorInitial('ann lee'), 'A');
+    assert.equal(authorInitial('  Иван'), 'И');
+    assert.equal(authorInitial(''), '?');
+    assert.equal(authorInitial(undefined), '?');
 });
