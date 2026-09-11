@@ -1,8 +1,11 @@
 GO       ?= go
+# VERSION is stamped into the binary and names the release archive.
+VERSION  ?= 0.1.0
+MODULE   := github.com/pavelvarganov/slack-threads
 WAILS    ?= $(shell go env GOPATH)/bin/wails
 GOLANGCI ?= $(shell go env GOPATH)/bin/golangci-lint
 
-.PHONY: all test test-go test-front lint fmt build dev tidy clean
+.PHONY: all test test-go test-front lint fmt build dist dev tidy clean
 
 all: test lint
 
@@ -33,6 +36,14 @@ fmt:
 build:
 	$(WAILS) build
 
+## dist: universal .app plus the zip a Homebrew cask downloads
+dist:
+	$(WAILS) build -platform darwin/universal -ldflags "-X $(MODULE)/internal/app.Version=$(VERSION)"
+	rm -f build/slack-threads-$(VERSION).zip
+	# ditto, not zip: it keeps the bundle's symlinks and resource forks intact.
+	ditto -c -k --keepParent build/bin/slack-threads.app build/slack-threads-$(VERSION).zip
+	@shasum -a 256 build/slack-threads-$(VERSION).zip
+
 ## dev: run the app with live reload
 dev:
 	$(WAILS) dev
@@ -43,4 +54,4 @@ tidy:
 
 ## clean: remove build artefacts
 clean:
-	rm -rf build/bin frontend/dist/assets frontend/dist/index.html
+	rm -rf build/bin build/*.zip frontend/dist/assets frontend/dist/index.html
