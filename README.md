@@ -40,48 +40,42 @@
 Всё делается один раз и занимает минут двадцать, из которых половина — ожидание
 апрува Slack-приложения, если в вашем воркспейсе он требуется.
 
-## Шаг 1. Что должно быть на компьютере
-
-Нужен macOS (проверялось на Apple Silicon) и четыре вещи. Проверить, чего не хватает:
+## Шаг 1. Само приложение
 
 ```sh
-go version      # нужен Go 1.25+
-node -v         # нужен Node.js 20+
-claude --version
-wails version
+brew install --cask pvarganov/tap/slack-threads
 ```
 
-Чего нет — ставится так:
+Ставится готовый бандл — universal, работает и на Apple Silicon, и на Intel.
+Обновление потом: `brew upgrade --cask slack-threads`.
+
+Приложение не нотаризовано (собрано не под сертификат разработчика), поэтому macOS
+может отказаться его открывать. Разрешите один раз: Системные настройки →
+Конфиденциальность и безопасность → **Открыть всё равно**. Либо снимите карантин
+сразу:
 
 ```sh
-# Homebrew, если его ещё нет: https://brew.sh
-brew install go node
-
-# claude CLI
-curl -fsSL https://claude.ai/install.sh | bash
-
-# Wails — сборщик десктопных приложений на Go
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
+xattr -dr com.apple.quarantine /Applications/slack-threads.app
 ```
 
-После установки `wails` может не находиться: он кладётся в `$(go env GOPATH)/bin`.
-Добавьте в `~/.zshrc`:
+Если Homebrew нет или хочется собрать из исходников — [см. ниже](#сборка-из-исходников).
+
+## Шаг 2. claude CLI
+
+Перевод делает `claude` CLI под вашей подпиской Anthropic — отдельный API-ключ
+не нужен. Если его ещё нет:
 
 ```sh
-export PATH="$PATH:$(go env GOPATH)/bin"
+brew install --cask claude-code
 ```
 
-## Шаг 2. Вход в claude
-
-Переводчик работает через ваш аккаунт Anthropic — отдельный API-ключ не нужен,
-достаточно подписки. Войдите один раз:
+Войдите в аккаунт — команда откроет браузер:
 
 ```sh
 claude
 ```
 
-Команда откроет браузер и попросит залогиниться; после этого её можно закрыть
-(`/exit`). Проверить, что всё работает:
+После входа её можно закрыть (`/exit`) и проверить, что всё работает:
 
 ```sh
 claude -p "скажи привет"
@@ -120,33 +114,11 @@ claude -p "скажи привет"
 4. Скопируйте **User OAuth Token** — длинная строка, начинается с `xoxp-`.
    Она понадобится при первом запуске.
 
-## Шаг 4. Сборка приложения
-
-```sh
-git clone https://github.com/pvarganov/slack-threads.git
-cd slack-threads
-make build
-```
-
-Сборка занимает пару минут: Wails собирает Go-код, ставит зависимости фронтенда
-и упаковывает всё в `build/bin/slack-threads.app`.
-
-Перенесите приложение к остальным, чтобы оно появилось в Spotlight и Launchpad:
-
-```sh
-cp -R build/bin/slack-threads.app /Applications/
-```
-
-## Шаг 5. Первый запуск
+## Шаг 4. Первый запуск
 
 Откройте **slack-threads** из Launchpad или Spotlight (⌘Space).
 
-macOS может сказать, что приложение «не удаётся проверить» — оно собрано вами же
-и не подписано сертификатом разработчика. Откройте Системные настройки →
-Конфиденциальность и безопасность, найдите сообщение про slack-threads и нажмите
-**Открыть всё равно**. Спрашивается один раз.
-
-Дальше приложение попросит токен — вставьте `xoxp-…` из шага 3 и сохраните.
+Приложение попросит токен — вставьте `xoxp-…` из шага 3 и сохраните.
 Токен уйдёт в системный keychain; macOS спросит разрешение на доступ к нему, лучше
 ответить «Всегда разрешать», иначе вопрос будет повторяться при каждом запуске.
 В файлах конфигурации и в базе токен не хранится.
@@ -198,15 +170,14 @@ macOS может сказать, что приложение «не удаётс
 ## Обновить приложение до свежей версии
 
 ```sh
-cd slack-threads
-git pull
-make build
-cp -R build/bin/slack-threads.app /Applications/
+brew upgrade --cask slack-threads
 ```
 
 Ваши треды, переводы и токен при этом не теряются: база лежит отдельно, в
 `~/Library/Application Support/slack-threads/threads.db`, и переносится между версиями
 автоматически.
+
+Удалить вместе с базой и настройками: `brew uninstall --zap --cask slack-threads`.
 
 ## Настройки через переменные окружения
 
@@ -237,8 +208,34 @@ cp -R build/bin/slack-threads.app /Applications/
 - **Перевод зависит от `claude` CLI.** Формат его потока событий не гарантирован
   стабильным между версиями; после крупного обновления CLI контракт стоит перепроверить
   (см. `docs/claude-cli-contract.md`).
-- **Подпись и нотаризация не предусмотрены** — приложение собирается и запускается
-  локально вами.
+- **Нотаризации нет.** Бандл подписан ad-hoc, без сертификата разработчика Apple,
+  поэтому macOS при первом открытии может спросить подтверждение.
+
+---
+
+---
+
+# Сборка из исходников
+
+Нужна, если Homebrew нет или вы хотите собрать приложение сами. На машине должны
+быть Go 1.25+, Node.js 20+ и Wails:
+
+```sh
+brew install go node
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+export PATH="$PATH:$(go env GOPATH)/bin"   # wails ставится сюда
+```
+
+Дальше:
+
+```sh
+git clone https://github.com/pvarganov/slack-threads.git
+cd slack-threads
+make build
+cp -R build/bin/slack-threads.app /Applications/
+```
+
+Остальные шаги установки (claude CLI, Slack-приложение, токен) те же.
 
 ---
 
@@ -252,11 +249,16 @@ make dev         # запуск с live reload
 make build       # .app в build/bin
 ```
 
-Версия проставляется линковкой:
+## Выпуск релиза
 
 ```sh
-wails build -ldflags "-X github.com/pavelvarganov/slack-threads/internal/app.Version=1.0.0"
+make dist VERSION=0.2.0        # universal .app, zip и его sha256
+gh release create v0.2.0 build/slack-threads-0.2.0.zip
 ```
+
+Дальше в [pvarganov/homebrew-tap](https://github.com/pvarganov/homebrew-tap)
+в `Casks/slack-threads.rb` обновляются `version` и `sha256` — после этого
+`brew upgrade --cask slack-threads` подхватит новую версию.
 
 SQLite подключён через `modernc.org/sqlite` (чистый Go), cgo не требуется.
 
