@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -55,16 +56,37 @@ func TestAuthorNamePrefersTheHandle(t *testing.T) {
 	tests := []struct {
 		name string
 		user store.User
+		raw  string
 		want string
 	}{
 		{name: "handle", user: store.User{DisplayName: "pavel", RealName: "Pavel V"}, want: "pavel"},
 		{name: "real name", user: store.User{RealName: "Pavel V"}, want: "Pavel V"},
 		{name: "unknown", want: "U9"},
+		{
+			// The app's own label beats the profile of the bot user
+			// behind it: Slack shows exactly this over the message.
+			name: "bot_profile beats the profile",
+			user: store.User{DisplayName: "davidtam", RealName: "Maia (TAM)"},
+			raw:  `{"bot_profile":{"name":"Maia (TAM)"}}`,
+			want: "Maia (TAM)",
+		},
+		{
+			name: "username beats bot_profile",
+			raw:  `{"username":"Maia (TAM)","bot_profile":{"name":"Pylon"}}`,
+			want: "Maia (TAM)",
+		},
+		{
+			// A bot Slack refuses to resolve used to show as a raw ID.
+			name: "unresolved bot keeps its label",
+			raw:  `{"username":"Maia (TAM)"}`,
+			want: "Maia (TAM)",
+		},
+		{name: "broken payload falls back to the profile", raw: "{oops", user: store.User{DisplayName: "pavel"}, want: "pavel"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := authorName("U9", tc.user); got != tc.want {
+			if got := authorName("U9", tc.user, tc.raw); got != tc.want {
 				t.Errorf("authorName = %q, want %q", got, tc.want)
 			}
 		})
@@ -165,5 +187,53 @@ func TestMessageViewsWithoutTranslationHaveNoRussianBlocks(t *testing.T) {
 
 	if got[0].Author != "U1" {
 		t.Errorf("author = %q, want the raw ID fallback", got[0].Author)
+	}
+}
+
+func TestWithRootLineNamesTheThread(t *testing.T) {
+	tests := []struct {
+		name   string
+		thread store.Thread
+		rootRU string
+		want   string
+	}{
+		{
+			name:   "the generated subject wins",
+			thread: store.Thread{ID: 1, Title: "Card payment errors", TitleRU: "Ошибка CVV в Ecommpay"},
+			rootRU: "Видим много ошибок оплаты картой",
+			want:   "Ошибка CVV в Ecommpay",
+		},
+		{
+			name:   "root line stands in until the subject exists",
+			thread: store.Thread{ID: 2, Title: "Card payment errors"},
+			rootRU: "Видим много ошибок оплаты картой\nвторой строкой подробности",
+			want:   "Видим много ошибок оплаты картой",
+		},
+		{
+			name:   "untranslated thread keeps the Slack line",
+			thread: store.Thread{ID: 3, Title: "Deploy is stuck"},
+			want:   "Deploy is stuck",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := withRootLine(tc.thread, tc.rootRU).Title; got != tc.want {
+				t.Errorf("Title = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFirstLineTrimsMarkdownAndLength(t *testing.T) {
+	if got := firstLine("\n\n> **Итог:** всё чинится", 80); got != "**Итог:** всё чинится" {
+		t.Errorf("firstLine = %q", got)
+	}
+
+	long := strings.Repeat("я", 200)
+	got := firstLine(long, 80)
+
+	if len([]rune(got)) != 81 || !strings.HasSuffix(got, "…") {
+		t.Errorf("firstLine length = %d, want 80 runes plus the ellipsis", len([]rune(got)))
 	}
 }

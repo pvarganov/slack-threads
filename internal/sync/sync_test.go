@@ -95,9 +95,11 @@ type fakeTranslator struct {
 	requests  [][]translate.Message
 	summaries [][]translate.Message
 	summary   string
-	keys      []string
-	err       error
-	summErr   error
+	// title is the subject the summarising turn reports.
+	title   string
+	keys    []string
+	err     error
+	summErr error
 	// drafts records the Russian replies handed to DraftReply.
 	drafts []string
 	// draftErr, when set, fails every DraftReply call.
@@ -156,14 +158,14 @@ func (f *fakeTranslator) TranslateMessages(
 
 func (f *fakeTranslator) Summarize(
 	_ context.Context, _ string, translated []translate.Message,
-) (string, error) {
+) (translate.Summary, error) {
 	if f.summErr != nil {
-		return "", f.summErr
+		return translate.Summary{}, f.summErr
 	}
 
 	f.summaries = append(f.summaries, translated)
 
-	return f.summary, nil
+	return translate.Summary{TextRU: f.summary, Title: f.title}, nil
 }
 
 func (f *fakeTranslator) SessionID(_ context.Context, _ string) (string, error) {
@@ -1049,14 +1051,14 @@ func TestSyncLongThreadTranslatesInChunks(t *testing.T) {
 		t.Fatalf("requests = %d, want 3 chunks of at most 10", len(tr.requests))
 	}
 
-	// Every request carries the already translated messages as context, so
-	// the last one is the largest.
 	if got := len(pending(tr.requests[2])); got != 5 {
 		t.Errorf("last chunk = %d messages, want 5", got)
 	}
 
-	if got := len(tr.requests[2]) - len(pending(tr.requests[2])); got != 20 {
-		t.Errorf("context in the last request = %d, want the 20 translated ones", got)
+	// Контекст ограничен последними переведёнными сообщениями, а не
+	// растёт вместе с тредом.
+	if got := len(tr.requests[2]) - len(pending(tr.requests[2])); got != 12 {
+		t.Errorf("context in the last request = %d, want the cap of 12", got)
 	}
 
 	var last sync.Progress
@@ -1069,5 +1071,150 @@ func TestSyncLongThreadTranslatesInChunks(t *testing.T) {
 
 	if last.Done != 25 || last.Total != 25 {
 		t.Errorf("last translating progress = %d/%d, want 25/25", last.Done, last.Total)
+	}
+}
+
+// users.info may report an unrelated display name for the bot user an app
+// posts as. The label on the message is what Slack shows, so it wins.
+func TestSyncPrefersMessageLabelOverProfile(t *testing.T) {
+	svc, _, slack, tr := newService(t)
+
+	slack.users["U0APP"] = slackapi.User{ID: "U0APP", DisplayName: "davidtam", RealName: "David Tam", IsBot: true}
+	slack.threads["C0LOAD/"+rootTS] = []slackapi.Message{
+		{
+			TS: rootTS, ThreadTS: rootTS, User: "U0APP", BotID: "B0APP", BotName: "Maia (TAM)",
+			Text: "Hi Pavel", Raw: []byte(`{"ts":"root"}`),
+		},
+	}
+
+	if _, err := svc.AddThread(context.Background(), threadURL); err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if len(tr.requests) == 0 || len(tr.requests[0]) == 0 {
+		t.Fatal("nothing was sent to the translator")
+	}
+
+	if got := tr.requests[0][0].Author; got != "Maia (TAM)" {
+		t.Errorf("author = %q, want the name Slack puts on the message", got)
+	}
+}
+
+// Тема треда приходит вместе с «Сутью» и переименовывает тред в списке.
+func TestSyncStoresTheGeneratedTitle(t *testing.T) {
+	svc, st, _, tr := newService(t)
+
+	tr.title = "Ошибка CVV в Ecommpay"
+
+	res, err := svc.AddThread(context.Background(), threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	thread, err := st.GetThread(context.Background(), res.Thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+
+	if thread.TitleRU != "Ошибка CVV в Ecommpay" {
+		t.Errorf("TitleRU = %q, want the subject from the summary turn", thread.TitleRU)
+	}
+
+	if thread.Title == "" {
+		t.Error("Title is empty: the fallback line must survive next to the subject")
+	}
+}
+
+// Без темы в ответе в заголовок уходит первая строка корневого
+// сообщения: пустое поле заставляло бы пересобирать «Суть» на каждом
+// обновлении в надежде получить тему.
+func TestSyncFallsBackToTheRootLineWithoutASubject(t *testing.T) {
+	svc, st, _, _ := newService(t)
+
+	res, err := svc.AddThread(context.Background(), threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	thread, err := st.GetThread(context.Background(), res.Thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+
+	if thread.TitleRU != "ru:Deploy is broken" {
+		t.Errorf("TitleRU = %q, want the translated root line", thread.TitleRU)
+	}
+}
+
+// Тред без темы пересобирает «Суть» даже без дельты: иначе треды,
+// добавленные до появления заголовков, остались бы без них навсегда.
+func TestRefreshGeneratesAMissingTitleWithoutADelta(t *testing.T) {
+	svc, st, _, tr := newService(t)
+
+	ctx := context.Background()
+
+	res, err := svc.AddThread(ctx, threadURL)
+	if err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if err := st.SetThreadTitleRU(ctx, res.Thread.ID, ""); err != nil {
+		t.Fatalf("SetThreadTitleRU: %v", err)
+	}
+
+	tr.title = "Ошибка CVV в Ecommpay"
+	before := len(tr.summaries)
+
+	if _, err := svc.RefreshThread(ctx, res.Thread.ID); err != nil {
+		t.Fatalf("RefreshThread: %v", err)
+	}
+
+	if len(tr.summaries) != before+1 {
+		t.Fatalf("summarising turns = %d, want one more for the missing title", len(tr.summaries)-before)
+	}
+
+	thread, err := st.GetThread(ctx, res.Thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+
+	if thread.TitleRU != "Ошибка CVV в Ecommpay" {
+		t.Errorf("TitleRU = %q, want the generated subject", thread.TitleRU)
+	}
+}
+
+// Контекст перевода ограничен: иначе каждый следующий запрос длинного
+// треда тащил бы в промпт всё, что переведено до него.
+func TestTranslationContextIsCapped(t *testing.T) {
+	svc, _, slack, tr := newService(t)
+
+	msgs := make([]slackapi.Message, 0, 40)
+
+	for i := range 40 {
+		ts := fmt.Sprintf("1788872%03d.000000", i)
+		if i == 0 {
+			ts = rootTS
+		}
+
+		msgs = append(msgs, slackapi.Message{
+			TS: ts, ThreadTS: rootTS, User: "U1",
+			Text: fmt.Sprintf("message %d", i), Raw: []byte(`{}`),
+		})
+	}
+
+	slack.threads["C0LOAD/"+rootTS] = msgs
+
+	if _, err := svc.AddThread(context.Background(), threadURL); err != nil {
+		t.Fatalf("AddThread: %v", err)
+	}
+
+	if len(tr.requests) < 2 {
+		t.Fatalf("translation requests = %d, want the thread split into several", len(tr.requests))
+	}
+
+	// В последнем запросе — контекст плюс сама порция, а не весь тред.
+	last := tr.requests[len(tr.requests)-1]
+	if len(last) > 12+10 {
+		t.Errorf("last request carried %d messages, want at most the context cap plus a chunk", len(last))
 	}
 }

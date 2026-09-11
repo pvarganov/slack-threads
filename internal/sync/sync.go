@@ -109,6 +109,7 @@ type Store interface {
 	SaveSummary(ctx context.Context, sum store.Summary) error
 	SetThreadFetched(ctx context.Context, id int64, at time.Time) error
 	SetThreadTitle(ctx context.Context, id int64, title string) error
+	SetThreadTitleRU(ctx context.Context, id int64, title string) error
 	SetThreadNeedsRefresh(ctx context.Context, id int64, needs bool) error
 	SetThreadSession(ctx context.Context, id int64, sessionID string) error
 	GetDraft(ctx context.Context, threadID int64) (store.Draft, error)
@@ -120,7 +121,7 @@ type Store interface {
 // *translate.Translator implements it.
 type Translator interface {
 	TranslateMessages(ctx context.Context, threadID string, msgs []translate.Message) ([]translate.Translation, error)
-	Summarize(ctx context.Context, threadID string, translated []translate.Message) (string, error)
+	Summarize(ctx context.Context, threadID string, translated []translate.Message) (translate.Summary, error)
 	DraftReply(ctx context.Context, threadID, ru string) (en, backRU string, err error)
 	// SessionID returns the thread's claude session id, once known.
 	SessionID(ctx context.Context, threadID string) (string, error)
@@ -390,11 +391,13 @@ func (s *Service) resolveNames(ctx context.Context, msgs []slackapi.Message) (ma
 		names[id] = u.Name()
 	}
 
-	// A bot message carries the name it posted under; it beats a stale
-	// profile and covers bots Slack refuses to resolve.
+	// The name Slack puts on the message wins over the cached profile:
+	// an app posts under its own label, and users.info may report an
+	// unrelated display name for the app's bot user. It also covers the
+	// bots Slack refuses to resolve at all.
 	for _, m := range msgs {
-		if m.Username != "" && names[m.Author()] == "" {
-			names[m.Author()] = m.Username
+		if label := m.Label(); label != "" {
+			names[m.Author()] = label
 		}
 	}
 
@@ -513,13 +516,18 @@ func (s *Service) updateSummary(
 		return err
 	}
 
-	if !translate.SummaryOutdated(sum.BasedOnTS, msgs) {
+	// Тред, у которого «Суть» свежая, а темы ещё нет, тоже идёт на этот
+	// ход: так тему получают треды, добавленные до её появления, и те,
+	// где модель её не прислала.
+	needsTitle := thread.TitleRU == "" && translate.NeedsSummary(msgs)
+
+	if !translate.SummaryOutdated(sum.BasedOnTS, msgs) && !needsTitle {
 		return nil
 	}
 
 	s.emit(Progress{ThreadID: thread.ID, Stage: StageSummarizing})
 
-	text, err := s.translator.Summarize(ctx, threadKey(thread), msgs)
+	sum2, err := s.translator.Summarize(ctx, threadKey(thread), msgs)
 	if err != nil {
 		return err
 	}
@@ -528,21 +536,69 @@ func (s *Service) updateSummary(
 		return err
 	}
 
-	if text == "" {
+	if sum2.TextRU == "" {
 		return nil
 	}
 
 	if err := s.store.SaveSummary(ctx, store.Summary{
 		ThreadID:  thread.ID,
-		TextRU:    text,
+		TextRU:    sum2.TextRU,
 		BasedOnTS: translate.SummaryBasedOn(msgs),
 	}); err != nil {
 		return err
 	}
 
+	// The subject comes out of the same turn; it renames the thread in
+	// the list from the root message's first line to what the thread is
+	// actually about. A turn that answered without one still writes a
+	// title — the Russian root line — so the thread is not re-summarised
+	// on every refresh just to ask again.
+	title := sum2.Title
+	if title == "" {
+		title = rootLine(msgs)
+	}
+
+	if title != "" && title != thread.TitleRU {
+		if err := s.store.SetThreadTitleRU(ctx, thread.ID, title); err != nil {
+			return err
+		}
+	}
+
 	res.SummaryUpdated = true
 
 	return nil
+}
+
+// titleFallbackLimit caps the stand-in subject built from the root line.
+const titleFallbackLimit = 60
+
+// rootLine is the first line of the root message's translation, used as
+// the thread's subject when the model did not write one.
+func rootLine(msgs []translate.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+
+	text := msgs[0].TextRU
+	if text == "" {
+		text = msgs[0].Text
+	}
+
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		runes := []rune(line)
+		if len(runes) > titleFallbackLimit {
+			return strings.TrimSpace(string(runes[:titleFallbackLimit])) + "…"
+		}
+
+		return line
+	}
+
+	return ""
 }
 
 // threadKey is the translator's session key for a thread. The local ID is
@@ -648,16 +704,32 @@ func pendingChunks(msgs []translate.Message, size int) [][]translate.Message {
 	return out
 }
 
-// contextFor builds one request: every message already translated, as
+// contextLimit is how many translated messages travel with a request as
+// terminology context. The claude session already holds the whole thread
+// in its history, so this block is a reminder of the recent wording, not
+// the thread itself. Without a cap every request of a long thread would
+// carry all of its predecessors: the hundredth message would be
+// translated with ninety-nine messages and their translations in front
+// of it, and each request would be slower than the last.
+const contextLimit = 12
+
+// contextFor builds one request: the most recent translated messages as
 // terminology context, followed by the chunk to translate.
 func contextFor(msgs, chunk []translate.Message) []translate.Message {
-	out := make([]translate.Message, 0, len(msgs))
+	translated := make([]translate.Message, 0, len(msgs))
 
 	for _, m := range msgs {
 		if m.TextRU != "" {
-			out = append(out, m)
+			translated = append(translated, m)
 		}
 	}
+
+	if len(translated) > contextLimit {
+		translated = translated[len(translated)-contextLimit:]
+	}
+
+	out := make([]translate.Message, 0, len(translated)+len(chunk))
+	out = append(out, translated...)
 
 	return append(out, chunk...)
 }

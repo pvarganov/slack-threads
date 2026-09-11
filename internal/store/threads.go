@@ -24,8 +24,13 @@ type Thread struct {
 	// TeamID is the team ID an app.slack.com/client/... link carried, used to
 	// rebuild the permalink when Workspace is empty.
 	TeamID string
-	// Title is a short human-readable label shown in the thread list.
+	// Title is the first line of the root message: the label the thread
+	// list shows until the translator writes a subject for it.
 	Title string
+	// TitleRU is the subject of the thread written by the translator,
+	// the way an email subject names a conversation. Empty until the
+	// first summary is built.
+	TitleRU string
 	// AddedAt is when the thread was added locally.
 	AddedAt time.Time
 	// LastFetchedAt is when the thread was last read from Slack; zero until
@@ -43,7 +48,7 @@ type Thread struct {
 }
 
 // threadColumns is the column list shared by every thread SELECT.
-const threadColumns = `id, channel_id, thread_ts, workspace, team_id, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh`
+const threadColumns = `id, channel_id, thread_ts, workspace, team_id, title, title_ru, added_at, last_fetched_at, archived, claude_session_id, needs_refresh`
 
 // AddThread stores a new thread and returns it with ID and AddedAt filled in.
 // It returns ErrThreadExists if the (ChannelID, ThreadTS) pair is already
@@ -58,9 +63,9 @@ func (s *Store) AddThread(ctx context.Context, t Thread) (Thread, error) {
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO threads (channel_id, thread_ts, workspace, team_id, title, added_at, last_fetched_at, archived, claude_session_id, needs_refresh)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ChannelID, t.ThreadTS, t.Workspace, t.TeamID, t.Title,
+		`INSERT INTO threads (channel_id, thread_ts, workspace, team_id, title, title_ru, added_at, last_fetched_at, archived, claude_session_id, needs_refresh)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ChannelID, t.ThreadTS, t.Workspace, t.TeamID, t.Title, t.TitleRU,
 		toUnix(t.AddedAt), nullableUnix(t.LastFetchedAt), boolToInt(t.Archived), t.ClaudeSessionID,
 		boolToInt(t.NeedsRefresh))
 	if err != nil {
@@ -154,9 +159,15 @@ func (s *Store) SetThreadArchived(ctx context.Context, id int64, archived bool) 
 	return s.updateThread(ctx, id, `UPDATE threads SET archived = ? WHERE id = ?`, boolToInt(archived), id)
 }
 
-// SetThreadTitle updates the thread title.
+// SetThreadTitle updates the fallback title, the first line of the root
+// message.
 func (s *Store) SetThreadTitle(ctx context.Context, id int64, title string) error {
 	return s.updateThread(ctx, id, `UPDATE threads SET title = ? WHERE id = ?`, title, id)
+}
+
+// SetThreadTitleRU updates the subject written by the translator.
+func (s *Store) SetThreadTitleRU(ctx context.Context, id int64, title string) error {
+	return s.updateThread(ctx, id, `UPDATE threads SET title_ru = ? WHERE id = ?`, title, id)
 }
 
 // SetThreadFetched records the moment the thread was last read from Slack.
@@ -219,7 +230,7 @@ func scanThread(sc rowScanner) (Thread, error) {
 		needsRefresh int
 	)
 
-	err := sc.Scan(&t.ID, &t.ChannelID, &t.ThreadTS, &t.Workspace, &t.TeamID, &t.Title,
+	err := sc.Scan(&t.ID, &t.ChannelID, &t.ThreadTS, &t.Workspace, &t.TeamID, &t.Title, &t.TitleRU,
 		&addedAt, &lastFetched, &archived, &t.ClaudeSessionID, &needsRefresh)
 	if err != nil {
 		return Thread{}, err

@@ -99,6 +99,16 @@ var migrations = []migration{
 			`ALTER TABLE threads ADD COLUMN team_id TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		name: "thread russian title",
+		stmts: []string{
+			// The subject of the thread, written by the translator along
+			// with the summary. Kept apart from title, which is the first
+			// line of the root message and stands in until the subject is
+			// generated.
+			`ALTER TABLE threads ADD COLUMN title_ru TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 }
 
 // SchemaVersion is the schema version a freshly migrated database carries.

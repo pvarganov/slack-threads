@@ -167,8 +167,10 @@ type fakeStorage struct {
 	translations map[int64]map[int64]store.Translation
 	summaries    map[int64]store.Summary
 	users        map[string]store.User
+	roots        map[int64]string
 
 	listErr    error
+	rootsErr   error
 	getErr     error
 	summaryErr error
 
@@ -183,8 +185,17 @@ func newFakeStorage() *fakeStorage {
 		translations: map[int64]map[int64]store.Translation{},
 		summaries:    map[int64]store.Summary{},
 		users:        map[string]store.User{},
+		roots:        map[int64]string{},
 		archived:     map[int64]bool{},
 	}
+}
+
+func (s *fakeStorage) RootTranslations(_ context.Context) (map[int64]string, error) {
+	if s.rootsErr != nil {
+		return nil, s.rootsErr
+	}
+
+	return s.roots, nil
 }
 
 func (s *fakeStorage) add(t store.Thread) {

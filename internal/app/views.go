@@ -13,7 +13,9 @@ import (
 
 // ThreadItem is one row of the thread list in the left column.
 type ThreadItem struct {
-	ID            int64  `json:"id"`
+	ID int64 `json:"id"`
+	// Title is the Russian first line of the root message when it has
+	// been translated; the original line is the fallback.
 	Title         string `json:"title"`
 	ChannelID     string `json:"channelId"`
 	Workspace     string `json:"workspace"`
@@ -89,7 +91,7 @@ type SentView struct {
 func threadItem(t store.Thread) ThreadItem {
 	return ThreadItem{
 		ID:            t.ID,
-		Title:         t.Title,
+		Title:         firstNonEmpty(t.TitleRU, t.Title),
 		ChannelID:     t.ChannelID,
 		Workspace:     t.Workspace,
 		Permalink:     threadPermalink(t),
@@ -98,6 +100,59 @@ func threadItem(t store.Thread) ThreadItem {
 		AddedAt:       formatTime(t.AddedAt),
 		LastFetchedAt: formatTime(t.LastFetchedAt),
 	}
+}
+
+// titleLimit keeps the left column readable: a long first line is cut,
+// not wrapped over the whole sidebar.
+const titleLimit = 80
+
+// withRootLine names the thread in the list. The subject the translator
+// wrote wins; until it exists — a thread too short to summarise, or one
+// added a moment ago — the first translated line of the root message
+// stands in, so a row is never blank.
+func withRootLine(t store.Thread, rootRU string) ThreadItem {
+	item := threadItem(t)
+
+	if t.TitleRU == "" {
+		if title := firstLine(rootRU, titleLimit); title != "" {
+			item.Title = title
+		}
+	}
+
+	return item
+}
+
+// firstLine is the first non-empty line of the text, shortened to limit
+// runes. Leading quote, heading and bullet markers are dropped: in a
+// one-line title they are noise. Emphasis is left alone, or "**Итог:**"
+// would lose its opening pair and keep the closing one.
+func firstLine(text string, limit int) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#>-• "))
+		if line == "" {
+			continue
+		}
+
+		runes := []rune(line)
+		if len(runes) > limit {
+			return strings.TrimSpace(string(runes[:limit])) + "…"
+		}
+
+		return line
+	}
+
+	return ""
+}
+
+// firstNonEmpty returns the first argument that is not empty.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
 }
 
 // draftView maps a stored draft onto its view.
@@ -119,7 +174,7 @@ func messageViews(
 			ID:        m.ID,
 			TS:        m.TS,
 			Time:      formatTime(tsTime(m.TS)),
-			Author:    authorName(m.UserID, user),
+			Author:    authorName(m.UserID, user, m.RawJSON),
 			AuthorID:  m.UserID,
 			IsBot:     user.IsBot,
 			Text:      m.Text,
@@ -136,18 +191,60 @@ func messageViews(
 }
 
 // userNames maps Slack IDs onto the labels mentions are rendered with.
+// A mention shows the profile name, which is what Slack itself renders
+// there, so the per-message label plays no part.
 func userNames(users map[string]store.User) map[string]string {
 	names := make(map[string]string, len(users))
 	for id, u := range users {
-		names[id] = authorName(id, u)
+		names[id] = profileName(id, u)
 	}
 
 	return names
 }
 
-// authorName prefers the handle Slack shows, then the full name, and falls
-// back to the raw ID for an author that was never cached.
-func authorName(id string, u store.User) string {
+// authorName is the name over the message. The label Slack shipped with
+// the payload wins: an app posts under its own name, and the bot user
+// behind it may carry an unrelated display name in its profile.
+func authorName(id string, u store.User, raw string) string {
+	if label := messageLabel(raw); label != "" {
+		return label
+	}
+
+	return profileName(id, u)
+}
+
+// messageLabel reads the name Slack put on the message itself: the
+// username a bot posted under, otherwise the app name from bot_profile.
+func messageLabel(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	var payload struct {
+		Username   string `json:"username"`
+		BotProfile *struct {
+			Name string `json:"name"`
+		} `json:"bot_profile"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+
+	if payload.Username != "" {
+		return payload.Username
+	}
+
+	if payload.BotProfile != nil {
+		return payload.BotProfile.Name
+	}
+
+	return ""
+}
+
+// profileName prefers the handle Slack shows, then the full name, and
+// falls back to the raw ID for an author that was never cached.
+func profileName(id string, u store.User) string {
 	switch {
 	case u.DisplayName != "":
 		return u.DisplayName

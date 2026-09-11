@@ -39,6 +39,7 @@ type Storage interface {
 	ListTranslations(ctx context.Context, threadID int64) (map[int64]store.Translation, error)
 	GetSummary(ctx context.Context, threadID int64) (store.Summary, error)
 	GetUsers(ctx context.Context, ids []string) (map[string]store.User, error)
+	RootTranslations(ctx context.Context) (map[int64]string, error)
 	SetThreadArchived(ctx context.Context, id int64, archived bool) error
 	DeleteThread(ctx context.Context, id int64) error
 }
@@ -86,14 +87,21 @@ func (a *App) ListThreads() ([]ThreadItem, error) {
 		return nil, errNotReady()
 	}
 
-	threads, err := a.store.ListThreads(a.context(), true)
+	ctx := a.context()
+
+	threads, err := a.store.ListThreads(ctx, true)
+	if err != nil {
+		return nil, userError(err)
+	}
+
+	roots, err := a.store.RootTranslations(ctx)
 	if err != nil {
 		return nil, userError(err)
 	}
 
 	out := make([]ThreadItem, 0, len(threads))
 	for _, t := range threads {
-		out = append(out, threadItem(t))
+		out = append(out, withRootLine(t, roots[t.ID]))
 	}
 
 	return out, nil
