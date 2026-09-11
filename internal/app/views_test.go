@@ -66,9 +66,18 @@ func TestAuthorNamePrefersTheHandle(t *testing.T) {
 			// The app's own label beats the profile of the bot user
 			// behind it: Slack shows exactly this over the message.
 			name: "bot_profile beats the profile",
-			user: store.User{DisplayName: "davidtam", RealName: "Maia (TAM)"},
+			user: store.User{DisplayName: "davidtam", RealName: "Maia (TAM)", IsBot: true},
 			raw:  `{"bot_profile":{"name":"Maia (TAM)"}}`,
 			want: "Maia (TAM)",
+		},
+		{
+			// A reply sent with a user token carries the app's
+			// bot_profile, but the author is the person: Slack shows
+			// their name over the message, and so do we.
+			name: "a person keeps their name over an app label",
+			user: store.User{DisplayName: "Pavel Varganov", RealName: "Pavel Varganov"},
+			raw:  `{"user":"U9","bot_profile":{"name":"claude"},"app_id":"A1"}`,
+			want: "Pavel Varganov",
 		},
 		{
 			name: "username beats bot_profile",

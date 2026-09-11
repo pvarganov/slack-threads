@@ -202,15 +202,28 @@ func userNames(users map[string]store.User) map[string]string {
 	return names
 }
 
-// authorName is the name over the message. The label Slack shipped with
-// the payload wins: an app posts under its own name, and the bot user
-// behind it may carry an unrelated display name in its profile.
+// authorName is the name over the message. A human keeps their profile
+// name even when the payload carries an app label: a message sent with a
+// user token of some app (this one included) is shown by Slack as coming
+// from the person, and it carries the app's bot_profile all the same. The
+// label only wins for a bot author, which posts under its own name while
+// the bot user behind it may carry an unrelated display name.
 func authorName(id string, u store.User, raw string) string {
+	if human(id, u) {
+		return profileName(id, u)
+	}
+
 	if label := messageLabel(raw); label != "" {
 		return label
 	}
 
 	return profileName(id, u)
+}
+
+// human reports an author known to be a person: a cached profile that is
+// not a bot. An author missing from the cache is not assumed either way.
+func human(id string, u store.User) bool {
+	return id != "" && !u.IsBot && (u.DisplayName != "" || u.RealName != "")
 }
 
 // messageLabel reads the name Slack put on the message itself: the
